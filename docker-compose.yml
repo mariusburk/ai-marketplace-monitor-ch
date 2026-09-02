@@ -10,7 +10,8 @@ services:
       TZ: Europe/Zurich
       # Facebook-Login. Dient gleichzeitig als Login für das Web-UI, weil das
       # UI auf 0.0.0.0 lauscht und dort Credentials verlangt — auch wenn nur
-      # tutti.ch überwacht wird. Werte kommen aus .env (nicht im Git).
+      # tutti.ch überwacht wird. Werte kommen aus .env (nicht im Git),
+      # Vorlage siehe .env.example.
       FACEBOOK_USERNAME: ${FACEBOOK_USERNAME}
       FACEBOOK_PASSWORD: ${FACEBOOK_PASSWORD}
       # Optional, nur für die KI-Bewertung der Inserate:
