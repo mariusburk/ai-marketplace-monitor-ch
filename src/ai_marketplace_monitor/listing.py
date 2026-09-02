@@ -20,6 +20,10 @@ class Listing:
     seller: str
     condition: str
     description: str
+    # How this price compares to the other offers of the same search. Optional
+    # and defaulted so that listings cached before this field existed still
+    # load, and so marketplaces that cannot compute it stay unaffected.
+    price_comparison: str = ""
 
     @property
     def content(self: "Listing") -> Tuple[str, str, str]:
@@ -29,11 +33,14 @@ class Listing:
     def hash(self: "Listing") -> str:
         # we need to normalize post_url before hashing because post_url will be different
         # each time from a search page. We also does not count image
+        # price_comparison is derived from the other listings of the same
+        # search, so it moves when they do. Hashing it would make an unchanged
+        # listing look new every time a neighbour's price changed.
         return hash_dict(
             {
                 x: (y.split("?")[0] if x == "post_url" else y)
                 for x, y in asdict(self).items()
-                if x != "image"
+                if x not in ("image", "price_comparison")
             }
         )
 

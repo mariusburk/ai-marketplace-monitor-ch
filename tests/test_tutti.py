@@ -443,3 +443,66 @@ def test_marketplace_config_supplies_defaults_for_items() -> None:
 
     assert marketplace.check_listing(_listing("CHF 10.-", "8050 Zürich, ZH"), item_config)
     assert not marketplace.check_listing(_listing("CHF 10.-", "8570 Weinfelden, TG"), item_config)
+
+
+def test_reference_prices_ignore_the_price_bounds() -> None:
+    """Price bounds must not clip the reference distribution.
+
+    The bounds are the question being asked, so applying them would remove
+    exactly the offers the comparison needs.
+    """
+    marketplace = _marketplace_with(TuttiMarketplaceConfig(name="tutti"))
+    item_config = TuttiItemConfig(
+        name="velo", search_phrases=["velo"], min_price="200", max_price="300"
+    )
+    listings = [_listing("CHF 100.-"), _listing("CHF 250.-"), _listing("CHF 900.-")]
+
+    assert marketplace.reference_prices(listings, item_config) == [100, 250, 900]
+
+
+def test_reference_prices_ignore_the_canton_filter() -> None:
+    """What an item is worth does not stop at a cantonal border."""
+    marketplace = _marketplace_with(TuttiMarketplaceConfig(name="tutti"))
+    item_config = TuttiItemConfig(name="velo", search_phrases=["velo"], canton=["ZH"])
+    listings = [_listing("CHF 100.-", "8050 Zürich, ZH"), _listing("CHF 200.-", "6900 Lugano, TI")]
+
+    assert marketplace.reference_prices(listings, item_config) == [100, 200]
+
+
+def test_reference_prices_apply_keyword_filters() -> None:
+    """A Hero 13 should be measured against other Hero 13 offers."""
+    marketplace = _marketplace_with(TuttiMarketplaceConfig(name="tutti"))
+    item_config = TuttiItemConfig(
+        name="gopro", search_phrases=["gopro"], keywords="13", antikeywords=["defekt"]
+    )
+    listings = [
+        _listing("CHF 300.-"),  # description "ein gutes Velo" -> kein Treffer
+        Listing(
+            marketplace="tutti",
+            name="g",
+            id="2",
+            title="GoPro Hero 13",
+            image="i",
+            price="CHF 400.-",
+            post_url="https://www.tutti.ch/de/vi/x/2",
+            location="8050 Zürich, ZH",
+            seller="s",
+            condition="c",
+            description="neuwertig",
+        ),
+        Listing(
+            marketplace="tutti",
+            name="g",
+            id="3",
+            title="GoPro Hero 13 defekt",
+            image="i",
+            price="CHF 50.-",
+            post_url="https://www.tutti.ch/de/vi/x/3",
+            location="8050 Zürich, ZH",
+            seller="s",
+            condition="c",
+            description="kaputt",
+        ),
+    ]
+
+    assert marketplace.reference_prices(listings, item_config) == [400]

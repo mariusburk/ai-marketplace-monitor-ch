@@ -337,17 +337,22 @@ class PushNotificationConfig(NotificationConfig):
             else:
                 desc = listing.description[: self.with_description] + "..."
 
+            # Shown right after the price, where it is easiest to read.
+            price_line = listing.price
+            if listing.price_comparison:
+                price_line = f"{listing.price} ({listing.price_comparison})"
+
             if self.message_format == "plain_text":
                 desc_newline = "\n" if desc else ""
                 msg = (
                     (
-                        f"{listing.title}\n{listing.price}, {listing.location}\n"
+                        f"{listing.title}\n{price_line}, {listing.location}\n"
                         f"{listing.post_url.split('?')[0]}{desc_newline}{desc}"
                     )
                     if rating.comment == AIResponse.NOT_EVALUATED
                     else (
                         f"[{rating.conclusion} ({rating.score})] {listing.title}\n"
-                        f"{listing.price}, {listing.location}\n"
+                        f"{price_line}, {listing.location}\n"
                         f"{listing.post_url.split('?')[0]}\n{desc}{desc_newline}"
                         f"\nAI: {rating.comment}"
                     )
@@ -357,14 +362,14 @@ class PushNotificationConfig(NotificationConfig):
                 msg = (
                     (
                         f"[**{listing.title}**]({listing.post_url.split('?')[0]})\n"
-                        f"{listing.price}, {listing.location}"
+                        f"{price_line}, {listing.location}"
                         f"{desc_newline}{desc}"
                     )
                     if rating.comment == AIResponse.NOT_EVALUATED
                     else (
                         f"[{rating.conclusion} ({rating.score})] "
                         f"[**{listing.title}**]({listing.post_url.split('?')[0]})\n"
-                        f"{listing.price}, {listing.location}\n"
+                        f"{price_line}, {listing.location}\n"
                         f"{desc}{desc_newline}"
                         f"\n**AI**: {rating.comment}"
                     )
@@ -374,13 +379,13 @@ class PushNotificationConfig(NotificationConfig):
                 msg = (
                     (
                         f"""<a href="{listing.post_url.split("?")[0]}"><b>{listing.title}</b></a>"""
-                        f"<br>{listing.price}, {listing.location}{desc_newline}{desc}"
+                        f"<br>{price_line}, {listing.location}{desc_newline}{desc}"
                     )
                     if rating.comment == AIResponse.NOT_EVALUATED
                     else (
                         f"<b>[{rating.conclusion} ({rating.score})]</b>"
                         f"""<a href="{listing.post_url.split("?")[0]}"><b>{listing.title}</b></a>"""
-                        f"<br>{listing.price}, {listing.location}<br>"
+                        f"<br>{price_line}, {listing.location}<br>"
                         f"{desc}{desc_newline}"
                         f"<br><b>AI</b>: <i>{rating.comment}</i>"
                     )

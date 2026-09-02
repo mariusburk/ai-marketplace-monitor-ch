@@ -13,6 +13,7 @@ from rich.pretty import pretty_repr
 
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
+from .price_stats import PriceStats, describe_price
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -367,71 +368,109 @@ class TuttiMarketplace(Marketplace):
             # the search. Only `page` survives on that url, so paginate from it.
             canonical_url = self.page.url
 
+            # Collect every page before yielding anything: the price comparison
+            # needs the whole result set of this phrase as its reference.
+            all_listings: List[Listing] = []
             for page_number in range(1, max_pages + 1):
                 if page_number > 1:
                     time.sleep(REQUEST_INTERVAL)
                     self.goto_url(with_page(canonical_url, page_number))
 
-                found_listings = TuttiSearchResultPage(
+                page_listings = TuttiSearchResultPage(
                     self.page, self.translator, self.logger
                 ).get_listings(site_language)
 
-                if not found_listings:
+                if not page_listings:
                     break
-
-                for listing in found_listings:
-                    if listing.post_url.split("?")[0] in found:
-                        continue
-                    if self.keyboard_monitor is not None and self.keyboard_monitor.is_paused():
-                        return
-                    counter.increment(CounterItem.LISTING_EXAMINED, item_config.name)
-                    found[listing.post_url.split("?")[0]] = True
-                    listing.name = item_config.name
-
-                    # filter on what the search page already provides; the condition is
-                    # only known after the listing page has been retrieved.
-                    if not self.check_listing(listing, item_config, condition_available=False):
-                        counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
-                        continue
-
-                    if fetch_details:
-                        try:
-                            details, from_cache = self.get_listing_details(
-                                listing.post_url,
-                                item_config,
-                                price=listing.price,
-                                title=listing.title,
-                            )
-                            if not from_cache:
-                                time.sleep(REQUEST_INTERVAL)
-                        except KeyboardInterrupt:
-                            raise
-                        except Exception as e:
-                            if self.logger:
-                                self.logger.error(
-                                    f"""{hilight("[Retrieve]", "fail")} Failed to get item details: {e}"""
-                                )
-                            continue
-                        # the search page is the more reliable source of title and price,
-                        # so only the fields it cannot provide are copied over.
-                        for attr in ("condition", "seller", "description", "image"):
-                            value = getattr(details, attr)
-                            if value:
-                                setattr(listing, attr, value)
-
-                    if self.logger:
-                        self.logger.debug(
-                            f"""{hilight("[Retrieve]", "succ")} New item "{listing.title}" from {listing.post_url} is sold by "{listing.seller}" and with description "{listing.description[:100]}..." """
-                        )
-
-                    if self.check_listing(listing, item_config):
-                        yield listing
-                    else:
-                        counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
-
+                all_listings.extend(page_listings)
                 # a short page is the last page
-                if len(found_listings) < LISTINGS_PER_PAGE:
+                if len(page_listings) < LISTINGS_PER_PAGE:
                     break
+
+            reference_prices = self.reference_prices(all_listings, item_config)
+            stats = PriceStats.from_prices(reference_prices)
+
+            if stats is not None and self.logger:
+                self.logger.debug(
+                    f"""{hilight("[Search]", "info")} Price reference for {hilight(search_phrase)}: """
+                    f"""median {TUTTI_CURRENCY} {stats.median} of {stats.count} listings"""
+                )
+
+            for listing in all_listings:
+                if listing.post_url.split("?")[0] in found:
+                    continue
+                if self.keyboard_monitor is not None and self.keyboard_monitor.is_paused():
+                    return
+                counter.increment(CounterItem.LISTING_EXAMINED, item_config.name)
+                found[listing.post_url.split("?")[0]] = True
+                listing.name = item_config.name
+                listing.price_comparison = describe_price(
+                    parse_price(listing.price), stats, TUTTI_CURRENCY
+                )
+
+                # filter on what the search page already provides; the condition is
+                # only known after the listing page has been retrieved.
+                if not self.check_listing(listing, item_config, condition_available=False):
+                    counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+                    continue
+
+                if fetch_details:
+                    try:
+                        details, from_cache = self.get_listing_details(
+                            listing.post_url,
+                            item_config,
+                            price=listing.price,
+                            title=listing.title,
+                        )
+                        if not from_cache:
+                            time.sleep(REQUEST_INTERVAL)
+                    except KeyboardInterrupt:
+                        raise
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.error(
+                                f"""{hilight("[Retrieve]", "fail")} Failed to get item details: {e}"""
+                            )
+                        continue
+                    # the search page is the more reliable source of title and price,
+                    # so only the fields it cannot provide are copied over.
+                    for attr in ("condition", "seller", "description", "image"):
+                        value = getattr(details, attr)
+                        if value:
+                            setattr(listing, attr, value)
+
+                if self.logger:
+                    self.logger.debug(
+                        f"""{hilight("[Retrieve]", "succ")} New item "{listing.title}" from {listing.post_url} is sold by "{listing.seller}" and with description "{listing.description[:100]}..." """
+                    )
+
+                if self.check_listing(listing, item_config):
+                    yield listing
+                else:
+                    counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+
+    def reference_prices(
+        self: "TuttiMarketplace", listings: List[Listing], item_config: TuttiItemConfig
+    ) -> List[int | None]:
+        """Prices to compare a listing against, drawn from the same search.
+
+        Only the keyword filters are applied, so a Hero 13 is measured against
+        other Hero 13 offers. The price bounds are deliberately ignored — they
+        are the question being asked, and applying them would clip the very
+        distribution the comparison rests on. The canton filter is skipped too,
+        because what an item is worth does not stop at a cantonal border.
+        """
+        keywords = item_config.keywords
+        antikeywords = item_config.antikeywords
+        prices: List[int | None] = []
+        for listing in listings:
+            haystack = f"{listing.title}  {listing.description}"
+            if antikeywords and is_substring(antikeywords, haystack):
+                continue
+            if keywords and not is_substring(keywords, haystack):
+                continue
+            prices.append(parse_price(listing.price))
+        return prices
 
     def get_listing_details(
         self: "TuttiMarketplace",

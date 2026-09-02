@@ -208,6 +208,11 @@ class AIBackend(Generic[TAIConfig]):
             f"""priced at {listing.price}, located in {listing.location}, """
             f"""posted at {listing.post_url} with description "{listing.description}"\n\n"""
         )
+        # A local model has no market data and would otherwise guess the MSRP
+        # from its training set. When the marketplace could measure the price
+        # against the other offers of the same search, give it that instead.
+        if listing.price_comparison:
+            prompt += f"""For reference, {listing.price_comparison}.\n\n"""
         # prompt
         if item_config.prompt is not None:
             prompt += item_config.prompt
