@@ -115,17 +115,34 @@ Each phase is independently shippable and leaves the app working.
       password 400, account created, app opens, token reuse 409, account
       survives restart, normal login works.
 
-### Phase 2 — Structured config API
+### Phase 2 — Structured config API *(done)*
 
-- [ ] `webui/schema.py` — derive field descriptors (name, type, required, enum,
-      help) from the config dataclasses per marketplace/AI/notification type.
-- [ ] `GET /api/schema`, `GET|POST /api/sections/{kind}`,
-      `PUT|DELETE /api/sections/{kind}/{name}`.
-- [ ] `POST /api/config/validate-section` — validate one proposed section against
-      the real dataclass, return **field-level** errors.
-- [ ] Secrets masked on read, round-tripped on write, per `secrets_redact.py`.
-- [ ] Tests: every marketplace's options appear in the schema; a bad canton
-      returns a field error, not a 500; secrets never leave the server in clear.
+- [x] `webui/schema.py` — field descriptors from `dataclasses.fields()`, so a
+      new marketplace option reaches the form the day it is added. Choices,
+      help and secret-ness cannot be read off a validator, so they live in
+      `FIELD_HINTS`; a field with no hint still appears as a text input.
+- [x] One derivation cannot be automatic: `search_phrases` carries
+      `default_factory=list` yet its validator rejects an empty list. `FieldHint`
+      gained a `required` override for that.
+- [x] `webui/sections.py` — read, render, validate and splice one section.
+- [x] `GET /api/schema`, `GET /api/sections`, `GET|PUT|DELETE
+      /api/sections/{kind}[/{name}]`, `POST /api/sections/{kind}` and
+      `POST /api/sections/{kind}/validate` for live field errors.
+- [x] Secrets masked on read and round-tripped on write, so a form that never
+      saw a token cannot blank it.
+- [x] **Two bugs the live container found that unit tests had not.** A saved
+      item carried no `marketplace = …`, so the loader bound it to whichever
+      marketplace section came first and tutti options landed on a facebook
+      config; the discriminator is now written for item, marketplace and ai,
+      and an item's variant resolves through its marketplace section's
+      `market_type`, so a section named anything still works. And deleting left
+      a blank line behind: the splice now normalises the seam to one blank line
+      rather than pretending a delete can be the byte-exact inverse of an
+      insert.
+- [x] Tests (44 new) plus a live run against the real config: invalid canton
+      returns a field error and touches nothing, a valid item is written and
+      picked up, comments and neighbouring sections survive, and three
+      add/delete cycles leave the file byte-identical.
 
 ### Phase 3 — Diagnostics *(kills the remaining `docker exec` cases)*
 

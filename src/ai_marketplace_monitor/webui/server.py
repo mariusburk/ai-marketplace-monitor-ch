@@ -50,6 +50,8 @@ from .config_api import ConfigFileService
 from .config_auth import extract_credentials
 from .found_export import iter_found_csv, iter_found_rows
 from .log_handler import LogBroadcastHandler
+from .schema import config_schema
+from .sections import SectionError, SectionService, validate_values
 from .setup import (
     SetupError,
     WebUIAccount,
@@ -237,6 +239,8 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
+
+    section_service = SectionService(config_service)
 
     process_secret = secrets.token_urlsafe(32)
     sessions = SessionManager(process_secret)
@@ -469,6 +473,91 @@ def create_app(
             return {"ok": True, "message": "Monitor woken — searching all items now."}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to touch config: {e}") from e
+
+    # ------------------------------------------------------------------
+    # Structured config: what the forms are built from and written through
+    # ------------------------------------------------------------------
+
+    @app.get("/api/schema")
+    async def schema(_: str = Depends(require_session)) -> Dict[str, Any]:
+        """Field descriptions, derived from the config dataclasses."""
+        return config_schema()
+
+    @app.get("/api/sections")
+    async def list_sections(_: str = Depends(require_session)) -> Dict[str, Any]:
+        return {"sections": section_service.list_sections()}
+
+    @app.get("/api/sections/{kind}/{name}")
+    async def get_section(
+        kind: str, name: str, _: str = Depends(require_session)
+    ) -> Dict[str, Any]:
+        try:
+            return section_service.get_section(kind, name)
+        except SectionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/sections/{kind}")
+    async def create_section(
+        kind: str,
+        payload: Dict[str, Any],
+        _: str = Depends(require_session),
+        __: None = Depends(require_csrf),
+    ) -> Dict[str, Any]:
+        return _save(kind, payload, create=True)
+
+    @app.put("/api/sections/{kind}/{name}")
+    async def update_section(
+        kind: str,
+        name: str,
+        payload: Dict[str, Any],
+        _: str = Depends(require_session),
+        __: None = Depends(require_csrf),
+    ) -> Dict[str, Any]:
+        return _save(kind, {**payload, "name": name}, create=False)
+
+    @app.delete("/api/sections/{kind}/{name}")
+    async def delete_section(
+        kind: str,
+        name: str,
+        _: str = Depends(require_session),
+        __: None = Depends(require_csrf),
+    ) -> Dict[str, Any]:
+        try:
+            section_service.delete_section(kind, name)
+        except SectionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True}
+
+    @app.post("/api/sections/{kind}/validate")
+    async def validate_section(
+        kind: str, payload: Dict[str, Any], _: str = Depends(require_session)
+    ) -> Dict[str, Any]:
+        """Check a section without writing it, so a form can mark fields live."""
+        try:
+            errors = validate_values(
+                kind,
+                payload.get("variant"),
+                str(payload.get("name") or "probe"),
+                payload.get("values") or {},
+            )
+        except SectionError as exc:
+            return {"ok": False, "errors": {"": str(exc)}}
+        return {"ok": not errors, "errors": errors}
+
+    def _save(kind: str, payload: Dict[str, Any], *, create: bool) -> Dict[str, Any]:
+        try:
+            errors = section_service.save_section(
+                kind,
+                str(payload.get("name") or ""),
+                payload.get("variant"),
+                payload.get("values") or {},
+                create=create,
+            )
+        except SectionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if errors:
+            return {"ok": False, "errors": errors}
+        return {"ok": True, "errors": {}}
 
     @app.get("/api/logs")
     async def get_logs(
