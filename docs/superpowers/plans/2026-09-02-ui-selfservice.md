@@ -1,0 +1,258 @@
+# Self-service Web UI — Implementation Plan
+
+**Goal:** `docker compose up -d` is the only command. Every secret, key, marketplace
+and search is created in the web UI. Nothing about *what to monitor* lives in
+`.env` or `docker-compose.yml` any more.
+
+**Reference spec:** `docs/superpowers/specs/2026-09-02-ui-selfservice-design.md`
+
+**Branch:** `ui-improvements` (created off `main`, currently empty).
+
+---
+
+## The two blockers
+
+Neither is cosmetic; both were hit for real while setting this instance up.
+
+**1. The UI cannot start without credentials.** The image binds `0.0.0.0`, and
+`webui/server.py` refuses a non-loopback bind unless it finds a username and
+password — taken from a `[marketplace.*]` section or `FACEBOOK_USERNAME` /
+`FACEBOOK_PASSWORD`. A fresh container therefore has **no UI in which to enter
+credentials**. The monitor still runs, port 8467 is simply dead, which reads as
+a broken container. Any "set it up in the UI" story dies here first.
+
+**2. UI login is the marketplace login.** `webui/config_auth.py` reuses Facebook
+credentials as the UI password. That conflates two identities, means a
+tutti-only user has no way in, and is not something to ship to paying users.
+
+---
+
+## Architecture
+
+**Own identity.** A `[webui]` section in `config.toml` holds `username` and a
+bcrypt `password_hash` (`webui/auth.py` already has `hash_password` /
+`verify_password`). Marketplace credentials become just another secret the UI
+manages, never the door key.
+
+**First run.** With no `[webui]` section the server starts in **setup mode**: it
+binds as configured but every route except the setup flow is refused, and it
+prints a one-time token plus URL to stdout — visible with `docker compose logs aimm`.
+This is the Portainer / Paperless / Jellyfin pattern and the one CLI step that
+genuinely cannot be removed: something must prove physical access to the host.
+The token is generated per boot, held in memory only, and dies once an admin
+account exists.
+
+**Secrets move into `config.toml`.** The UI already masks and round-trips secrets
+there (`webui/secrets_redact.py`), and the file is hot-reloaded on change — so a
+token entered in the UI takes effect without a restart. Environment variables are
+*not* reloadable: any `.env`-based flow would need `docker compose up -d` on every
+change, which puts the user back on the CLI. `${ENV_VAR}` stays supported for
+people who prefer docker secrets, but the UI writes real values.
+
+**Structured config API.** Today the only write path is a whole-file
+`PUT /api/config/file/{id}`. Forms need per-section reads, writes and field-level
+errors. The field list is *derived from the dataclasses* (`TuttiItemConfig`,
+`FacebookItemConfig`, …) rather than hardcoded in JS, so adding a marketplace
+option surfaces in the UI automatically. Format-preserving TOML editing already
+exists client-side as the vendored `toml-edit-js` WASM — reuse it and add no
+Python dependency.
+
+**What deliberately stays in compose:** port mapping, the volume, `restart:`,
+`TZ`, and the `AIMM_*` display/VNC variables. That is infrastructure, correctly
+the orchestrator's job — a UI cannot rebind its own port. `.env` keeps only an
+optional `AIMM_ADMIN_PASSWORD` for unattended provisioning.
+
+---
+
+## Global constraints
+
+Same as the existing plans in this directory, plus:
+
+- **Lint:** ruff + black, `line-length = 99`, `D205` enforced, google docstrings.
+- **Types:** every function annotated, including tests; `mypy` over `src`.
+- **Broad excepts** re-raise `KeyboardInterrupt` first.
+- **Auth:** reads use `Depends(require_session)`; all writes additionally
+  `require_csrf`, matching the existing `PUT /api/config/file/{id}`.
+- **Do not commit `uv.lock`** — it is stale against `pyproject.toml` and any
+  `uv sync` rewrites it.
+- **Test env on this host:** `HOME=<scratch>` and
+  `PLAYWRIGHT_BROWSERS_PATH=/home/dockeradmin/.cache/ms-playwright`, plus
+  `LD_LIBRARY_PATH` to the extracted sysroot. See the memory file
+  `aimm-verification-workflow`.
+- **Fonts are vendored**, never fetched from a CDN at runtime.
+
+---
+
+## Phases
+
+Each phase is independently shippable and leaves the app working.
+
+### Phase 1 — Identity and first run *(done)*
+
+- [x] Account in its own `webui.toml`, **not** a `[webui]` section in
+      `config.toml` as originally planned. Three reasons found while building:
+      `Config.validate_sections` rejects unknown top-level sections, the UI
+      rewrites `config.toml` on every edit, and a bcrypt hash has no business
+      in the file a user opens to change a search.
+- [x] `webui/setup.py`: account file (0600, atomic create), validation,
+      one-time boot token, unattended provisioning from `AIMM_ADMIN_PASSWORD`.
+- [x] `GET /api/setup/status`, `POST /api/setup/account` — one round trip
+      rather than the planned claim/admin pair; there was no state worth
+      keeping between them.
+- [x] Startup banner prints the token when no account exists.
+- [x] `_resolve_auth` prefers the account file, falls back to marketplace
+      credentials, and only then enters setup mode. Loopback keeps its
+      password-free behaviour.
+- [x] **Fixed a pre-existing bug this uncovered:** the config the container
+      writes on first run contains `username = "${FACEBOOK_USERNAME}"`, and
+      `extract_credentials` took the unresolved placeholder literally. A fresh
+      container therefore believed it had credentials, showed
+      `user: ${FACEBOOK_USERNAME}` in the banner, and could never be logged
+      into. Placeholders now resolve against the environment and count as
+      absent when unset.
+- [x] Tests (33 new) plus a live container walk-through: empty config dir →
+      setup page, app and login refused with 403, wrong token 401, weak
+      password 400, account created, app opens, token reuse 409, account
+      survives restart, normal login works.
+
+### Phase 2 — Structured config API
+
+- [ ] `webui/schema.py` — derive field descriptors (name, type, required, enum,
+      help) from the config dataclasses per marketplace/AI/notification type.
+- [ ] `GET /api/schema`, `GET|POST /api/sections/{kind}`,
+      `PUT|DELETE /api/sections/{kind}/{name}`.
+- [ ] `POST /api/config/validate-section` — validate one proposed section against
+      the real dataclass, return **field-level** errors.
+- [ ] Secrets masked on read, round-tripped on write, per `secrets_redact.py`.
+- [ ] Tests: every marketplace's options appear in the schema; a bad canton
+      returns a field error, not a 500; secrets never leave the server in clear.
+
+### Phase 3 — Diagnostics *(kills the remaining `docker exec` cases)*
+
+- [ ] `POST /api/test/notification` — send a real test push to one user.
+- [ ] `POST /api/test/ai` — reachability + one sample rating, returns the text.
+- [ ] `GET /api/health` — per marketplace: logged in? per item: last run, next run,
+      hits. AI reachable, notification configured.
+- [ ] `POST /api/cache/clear` with a scope (all / listings / ai).
+- [ ] Tests with mocked backends; no live network in CI.
+
+### Phase 3.5 — Marketplace selection *(client request)*
+
+Two levels, because they answer different questions.
+
+- [ ] **Global switches** — one per marketplace in Settings, writing `enabled`
+      on the `[marketplace.*]` section. The backend already honours this
+      (`validate_items` and `schedule_jobs` both skip a disabled marketplace),
+      so this is UI only. A disabled marketplace stops being searched while its
+      hunts survive.
+- [ ] **Per-hunt selection** — `marketplace` currently accepts a single name and
+      `Config.get_item_config` binds an item to the first match, which is why
+      watching one thing on two sites needs two duplicated items today. Accept a
+      **list**, and expand one authored hunt into one runtime `ItemConfig` per
+      selected marketplace. Each keeps its own price reference, so a tutti
+      median is never mixed with a facebook one.
+- [ ] Migration: a plain string keeps working and is read as a one-element list.
+- [ ] Tests: string and list both load; an unknown name is a field error; a
+      disabled marketplace is skipped while its hunts remain; expansion produces
+      the right per-marketplace config subclass.
+
+This is the piece that makes the product scale to a third marketplace without
+the UI growing — a new marketplace adds one switch and one checkbox.
+
+### Phase 3.6 — One price reference across all marketplaces
+
+**Client decision, and it supersedes what is on `main`.** Commits `1cc3293` and
+`6ddacec` build the reference set *inside* each marketplace's `search()`, from
+that one search's own results — so a hunt running on tutti and facebook gets two
+separate medians. The reference becomes **global per hunt** instead: what a GoPro
+is worth does not depend on which site it is listed on, and merging roughly
+doubles the sample, which matters when a page holds 30 listings and the
+`MIN_REFERENCE_PRICES` floor is 4.
+
+The computation therefore has to move out of the marketplace classes, because a
+tutti run must be able to use prices facebook observed twenty minutes earlier.
+
+- [ ] `price_index.py` — a price observation store on the existing `diskcache`.
+      Add `CacheType.PRICE_OBSERVATION`. One record per listing seen:
+      hunt, marketplace, listing id, amount, currency, timestamp.
+- [ ] Each marketplace's search **records** observations for every listing that
+      passed the keyword filters (still ignoring price and canton bounds), and
+      no longer computes statistics itself. `reference_prices()` stays as the
+      keyword-matching helper; `price_reference()` in facebook and the inline
+      block in tutti go away.
+- [ ] `PriceStats` is built from the store, filtered to one hunt and a
+      **freshness window** (default 14 days — long enough to fill the sample,
+      short enough that a second-hand price is still current). Stale records are
+      evicted on write.
+- [ ] **Currency.** Observations keep their own currency; the set is converted to
+      the currency of the listing being judged, via `CurrencyConverter` which is
+      already a dependency. A record whose currency cannot be converted is
+      dropped rather than mixed in — a CHF median polluted by unconverted EUR is
+      worse than a smaller sample.
+- [ ] The readout names its composition — "30 vergleichbare Angebote (21 tutti,
+      9 Facebook)" — so merging does not hide that the two sites price
+      differently. That is the honest version of a global median.
+- [ ] Facebook's extra unfiltered search (only fired when price bounds are set)
+      stays: it is what makes facebook observations unbiased by the bounds.
+- [ ] Tests: observations from two marketplaces merge into one median; the
+      freshness window evicts; an unconvertible currency is dropped, not mixed;
+      below the floor still yields no comparison; composition counts are right.
+
+### Phase 4 — The finds feed
+
+- [ ] `GET /api/found` — paginated, filterable by hunt, joining the same three
+      cache namespaces `found_export.py` already joins. Refactor that module so
+      CSV export and this endpoint share one join.
+- [ ] Include `price_comparison` and the parsed `PriceStats` so the client can draw
+      the ruler without re-deriving it.
+
+### Phase 5 — The interface
+
+Per the design spec. Vanilla JS, matching the existing stack — no framework.
+
+- [ ] Tokens, vendored fonts, base layout (rail + feed + log drawer).
+- [ ] Find card with the **price ruler**.
+- [ ] Hunt form generated from `/api/schema`, with the marketplace checkboxes
+      driving which per-marketplace fields appear.
+- [ ] Connections screen with inline Test buttons.
+- [ ] Setup wizard: token → admin → marketplace → first hunt.
+- [ ] Expert TOML editor retained behind Settings.
+- [ ] States: loading, empty, error on every list. Responsive to 390px.
+- [ ] Verify in a real browser at desktop and mobile widths before presenting.
+
+### Phase 6 — Docs
+
+- [ ] README quick start becomes: `docker compose up -d`, read the token, done.
+- [ ] `.env.example` shrinks to the optional admin password.
+- [ ] CHANGELOG.
+
+---
+
+## Deliberately out of scope
+
+Worth stating because of the subscription ambition: this plan makes the product
+**self-service for one owner**. It does not make it **multi-tenant**. Accounts
+per customer, data isolation, billing, and a hosted control plane are a separate
+and much larger project — the monitor currently assumes one config file, one
+cache and one browser. Phase 1 is the prerequisite for that work, not a
+down-payment on it.
+
+---
+
+## Decisions
+
+Settled with the client 2026-09-02; no open questions remain.
+
+1. **UI language: German.** All strings go through one dictionary
+   (`webui/static/strings.de.js`) so a second locale is a data change rather
+   than a refactor. Code, comments and identifiers stay English.
+2. **The fork stays private.** No PRs back to BoPeng. The UI may therefore
+   diverge as far as it needs to; no upstream compatibility constraint.
+3. **Facebook credentials live in `config.toml`.** Accepted. `${ENV_VAR}`
+   indirection keeps working for anyone who prefers docker secrets, but the UI
+   writes real values so a change takes effect on hot-reload. The file is
+   `0600` root inside the container and the UI masks the value on read.
+4. **Subscription is not a goal right now.** It was context for how the UI
+   should *look*, not a feature request — so the "out of scope" section above
+   stands, and nothing multi-tenant gets built. The bar is: it should look like
+   something one could sell.

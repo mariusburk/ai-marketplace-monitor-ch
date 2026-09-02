@@ -15,6 +15,7 @@ Two modes:
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,26 @@ def _deep_merge(dst: Dict[str, Any], src: Dict[str, Any]) -> None:
             dst[key] = value
 
 
+_PLACEHOLDER_RE = re.compile(r"^\$\{(\w+)\}$")
+
+
+def _resolve(value: Any) -> str | None:
+    """Return a usable credential, resolving a ``${VAR}`` placeholder.
+
+    The config the container writes on first run contains
+    ``username = "${FACEBOOK_USERNAME}"``. Taken literally that reads as a
+    perfectly good credential, so the UI would demand a password nobody can
+    type and first-run setup would never trigger. An unresolved placeholder is
+    the absence of a credential, not a credential.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    matched = _PLACEHOLDER_RE.match(value.strip())
+    if matched is None:
+        return value
+    return os.environ.get(matched.group(1)) or None
+
+
 def extract_credentials(config_files: List[Path]) -> ExtractedCredentials:
     """Return marketplace credentials from the config, or (None, None).
 
@@ -71,9 +92,9 @@ def extract_credentials(config_files: List[Path]) -> ExtractedCredentials:
         for section in marketplaces.values():
             if not isinstance(section, dict):
                 continue
-            username = section.get("username")
-            password = section.get("password")
-            if isinstance(username, str) and isinstance(password, str) and username and password:
+            username = _resolve(section.get("username"))
+            password = _resolve(section.get("password"))
+            if username and password:
                 return ExtractedCredentials(username=username, password=password)
 
     # Fallback: well-known environment variables (Facebook only for now).

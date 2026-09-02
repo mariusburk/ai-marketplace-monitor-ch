@@ -69,6 +69,20 @@ def _print_webui_banner(info: Any) -> None:
         text.append(url + "\n", style="bold cyan")
     text.append("\n")
 
+    if getattr(info, "setup_token", None):
+        # A fresh instance has no account yet. The token is the only way in,
+        # and the log is the only place it appears.
+        text.append("Erstes Setup — dieser Server hat noch kein Konto.\n\n", style="bold")
+        text.append("Setup-Token: ", style="dim")
+        text.append(f"{info.setup_token}\n\n", style="bold yellow")
+        text.append(
+            "Oeffne eine der Adressen oben und lege damit dein Konto an.\n"
+            "Der Token gilt bis zum naechsten Neustart und wird danach ungueltig.\n",
+            style="dim",
+        )
+        rich.print(Panel(text, title="[bold]Web UI[/bold]", border_style="yellow", padding=(1, 2)))
+        return
+
     if info.exposed:
         text.append("user:     ", style="dim")
         text.append(f"{info.username}\n")

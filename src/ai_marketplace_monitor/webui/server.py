@@ -50,6 +50,16 @@ from .config_api import ConfigFileService
 from .config_auth import extract_credentials
 from .found_export import iter_found_csv, iter_found_rows
 from .log_handler import LogBroadcastHandler
+from .setup import (
+    SetupError,
+    WebUIAccount,
+    create_account,
+    default_account_file,
+    generate_setup_token,
+    provision_from_environment,
+    read_account,
+    token_matches,
+)
 
 # Ensure the vendored toml-edit-js WASM bundle is served with the right
 # Content-Type. Python's mimetypes module learned .wasm in 3.10 but
@@ -65,6 +75,9 @@ class WebUIConfig:
     port: int = 8467
     config_files: List[Path] = field(default_factory=list)
     log_handler: LogBroadcastHandler | None = None
+    # Where the web UI's own account lives. Kept out of config.toml on purpose
+    # — see webui/setup.py. Overridable so tests need no home directory.
+    account_file: Path | None = None
 
 
 @dataclass
@@ -76,35 +89,74 @@ class StartupInfo:
     host: str
     port: int
     exposed: bool
+    # Set only while the instance has no account: the one-time token that
+    # unlocks the setup flow, printed to the log for the operator to copy.
+    setup_token: str | None = None
 
 
 class AuthState:
     """Mutable auth state.
 
-    On loopback (default) the web UI is always open — no password
-    required.  When ``--webui-host`` exposes the server on a
-    non-loopback interface, ``auth`` must be set (credentials from
-    a marketplace config section or environment variables).
+    On loopback (default) the web UI is always open — no password required.
+    When ``--webui-host`` exposes the server on a non-loopback interface,
+    ``auth`` must be set: from the web UI's own account file, or failing that
+    from a marketplace config section or environment variables.
+
+    A third state exists for a fresh install: no account anywhere, in which
+    case ``setup_token`` is set and only the setup routes answer. See
+    ``webui/setup.py`` for why that beats refusing to start.
     """
 
     def __init__(self) -> None:
         self.auth: AuthConfig | None = None
         self.exposed: bool = False
+        self.setup_token: str | None = None
+        self.account_file: Path = default_account_file()
+
+    @property
+    def setup_required(self) -> bool:
+        return self.setup_token is not None
+
+    def adopt(self, account: WebUIAccount) -> None:
+        """Switch to a real account, ending setup mode."""
+        self.auth = AuthConfig(
+            username=account.username,
+            password_hash=account.password_hash,
+            secret_key=account.session_secret,
+        )
+        self.setup_token = None
 
 
 def _resolve_auth(config: WebUIConfig) -> tuple[AuthState, StartupInfo]:
     """Build initial AuthState from config files and environment.
 
-    On loopback the UI is always open.  When exposed (--webui-host),
-    credentials are required — checked from ``[marketplace.*]`` config
-    sections, then ``FACEBOOK_USERNAME`` / ``FACEBOOK_PASSWORD`` env
-    vars.
+    On loopback the UI is always open. When exposed (--webui-host), an account
+    is required, resolved in order of precedence:
+
+    1. the web UI's own account file, written by the setup flow;
+    2. ``AIMM_ADMIN_PASSWORD``, which provisions that file unattended;
+    3. a ``[marketplace.*]`` section or ``FACEBOOK_USERNAME`` /
+       ``FACEBOOK_PASSWORD`` — kept so existing installs keep working, and
+       deprecated in favour of (1);
+    4. nothing at all, which starts setup mode rather than refusing to boot.
     """
     exposed = config.host not in ("127.0.0.1", "localhost", "::1")
     state = AuthState()
     state.exposed = exposed
+    state.account_file = config.account_file or default_account_file()
 
-    if exposed:
+    account = read_account(state.account_file)
+    if account is None:
+        try:
+            account = provision_from_environment(state.account_file)
+        except (SetupError, OSError):
+            # A bad AIMM_ADMIN_PASSWORD must not wedge the boot — fall through
+            # to setup mode, where the operator can fix it in the browser.
+            account = None
+    if account is not None:
+        state.adopt(account)
+
+    if exposed and state.auth is None:
         extracted = extract_credentials(config.config_files)
         if extracted.username and extracted.password:
             state.auth = AuthConfig(
@@ -112,9 +164,13 @@ def _resolve_auth(config: WebUIConfig) -> tuple[AuthState, StartupInfo]:
                 password_hash=hash_password(extracted.password),
                 secret_key=secrets.token_urlsafe(32),
             )
-        # If exposed with no credentials, start_webui() will reject this.
+        else:
+            # Nothing to authenticate against. Rather than refuse to start and
+            # leave the operator with a dead port, serve the setup flow.
+            state.setup_token = generate_setup_token()
 
     info = StartupInfo(
+        setup_token=state.setup_token,
         urls=_enumerate_urls(config.host, config.port),
         username=state.auth.username if state.auth else None,
         host=config.host,
@@ -188,12 +244,18 @@ def create_app(
 
     def is_open() -> bool:
         """True when running on loopback — no password required."""
-        return not state.exposed
+        return not state.exposed and not state.setup_required
 
     def require_session(
         request: Request,
         session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
     ) -> str:
+        # Until an account exists nothing but the setup flow answers, on
+        # loopback as much as when exposed. Otherwise a fresh container on
+        # 127.0.0.1 would hand out an open session and the setup step could
+        # be skipped entirely.
+        if state.setup_required:
+            raise HTTPException(status_code=403, detail="Setup required")
         if is_open():
             return "anonymous"
         if session is None:
@@ -217,11 +279,57 @@ def create_app(
     # Routes
     # ------------------------------------------------------------------
 
+    @app.get("/api/setup/status")
+    async def setup_status() -> Dict[str, Any]:
+        """Tell the client which screen to show. Deliberately unauthenticated.
+
+        It leaks only whether an account exists, which an attacker learns from
+        the login screen anyway.
+        """
+        return {"setup_required": state.setup_required}
+
+    @app.post("/api/setup/account")
+    async def setup_account(
+        request: Request,
+        response: Response,
+        token: str = Form(""),
+        username: str = Form(""),
+        password: str = Form(""),
+    ) -> Dict[str, Any]:
+        """Claim a fresh instance: exchange the boot token for an account."""
+        if not state.setup_required:
+            raise HTTPException(status_code=409, detail="Setup already completed")
+
+        client_ip = request.client.host if request.client else "unknown"
+        if rate_limiter.is_locked(client_ip):
+            raise HTTPException(status_code=429, detail="Too many failed attempts")
+        if not token_matches(state.setup_token, token):
+            rate_limiter.record_failure(client_ip)
+            raise HTTPException(status_code=401, detail="Invalid setup token")
+
+        try:
+            account = create_account(state.account_file, username, password)
+        except SetupError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Konto konnte nicht gespeichert werden: {exc}"
+            ) from exc
+
+        rate_limiter.reset(client_ip)
+        state.adopt(account)
+        # The signer is bound to the process secret, so the session issued here
+        # stays valid for this run; the stored secret takes over on restart.
+        session_token, csrf = sessions.issue(account.username)
+        _set_session_cookies(response, session_token, csrf)
+        return {"username": account.username, "csrf": csrf}
+
     @app.get("/api/auth/info")
     async def auth_info() -> Dict[str, Any]:
         """Return auth mode info for the frontend login screen."""
         return {
             "open": is_open(),
+            "setup_required": state.setup_required,
             "username_hint": state.auth.username if state.auth else None,
         }
 
@@ -232,6 +340,9 @@ def create_app(
         username: str = Form(""),
         password: str = Form(""),
     ) -> Dict[str, Any]:
+        if state.setup_required:
+            raise HTTPException(status_code=403, detail="Setup required")
+
         # Loopback — always open, no password needed.
         if is_open():
             token, csrf = sessions.issue("anonymous")
@@ -550,14 +661,12 @@ def start_webui(
         raise ValueError("WebUIConfig.log_handler is required")
     state, info = _resolve_auth(config)
 
-    # --webui-host requires credentials. Refuse to expose without auth.
-    if state.exposed and state.auth is None:
+    # An exposed UI with no account no longer refuses to start: it serves the
+    # first-run setup flow instead, gated by the one-time token in the log.
+    if state.exposed and state.auth is None and not state.setup_required:
         raise RuntimeError(
-            f"--webui-host {config.host} requires authentication. "
-            "Set username/password in a [marketplace.*] config section "
-            "or set FACEBOOK_USERNAME and FACEBOOK_PASSWORD environment "
-            "variables. Omit --webui-host to run on 127.0.0.1 without "
-            "a password."
+            f"--webui-host {config.host} requires authentication and no setup "
+            "token could be issued."
         )
 
     config_service = ConfigFileService(config.config_files, logger=logger)
