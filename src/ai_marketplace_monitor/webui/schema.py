@@ -30,10 +30,183 @@ from ..marketplace import ItemConfig, MarketplaceConfig
 from ..notification import NotificationConfig
 from ..tutti import SWISS_CANTONS, SiteLanguage
 from ..user import UserConfig
+from ..utils import MonitorConfig
 
 # Fields every section carries for bookkeeping rather than configuration. They
 # are set by the loader, not by a person, and have no place in a form.
 INTERNAL_FIELDS = frozenset({"name", "monitor_config", "searched_count"})
+
+# Facebook searches a city with a radius; tutti searches cantons. Both options
+# sit on the shared base class, so a tutti form would otherwise offer three
+# boxes that change nothing. The marketplace class already answers this in
+# `requires_search_city`, so the form asks it rather than keeping its own list.
+CITY_FIELDS = frozenset({"search_city", "city_name", "radius", "search_region"})
+
+# Fields the form sets from its own type picker rather than a text box.
+HIDDEN_BY_KIND = {
+    "marketplace": frozenset({"market_type"}),
+    "item": frozenset({"marketplace"}),
+    "ai": frozenset({"provider"}),
+    # `enabled` comes from BaseConfig; switching the monitor itself off is what
+    # stopping the container is for.
+    "monitor": frozenset({"enabled"}),
+}
+
+# A marketplace config and an item config share 25 of their 30 options, because
+# both inherit MarketItemCommonConfig — on a marketplace those options are
+# *defaults for every hunt on it*, not settings of the marketplace itself.
+# Rendered flat, the two forms look identical and equally unreadable. So each
+# kind names the handful of options that are actually about it, and the rest is
+# folded away behind one disclosure.
+PRIMARY_BY_KIND = {
+    "marketplace": frozenset(
+        {
+            "enabled",
+            "username",
+            "password",
+            "login_wait_time",
+            "language",
+            "search_city",
+            "city_name",
+            "radius",
+            "search_region",
+            "currency",
+            "canton",
+            "site_language",
+            "max_pages",
+            "fetch_details",
+            "search_interval",
+            "max_search_interval",
+            "notify",
+        }
+    ),
+    "item": frozenset(
+        {
+            "enabled",
+            "search_phrases",
+            "keywords",
+            "antikeywords",
+            "description",
+            "min_price",
+            "max_price",
+            "condition",
+            "rating",
+            "notify",
+        }
+    ),
+    "user": frozenset(
+        {
+            "enabled",
+            "email",
+            "pushbullet_token",
+            "pushover_user_key",
+            "pushover_api_token",
+            "ntfy_server",
+            "ntfy_topic",
+            "telegram_token",
+            "telegram_chat_id",
+            "notify_with",
+            "remind",
+        }
+    ),
+    "ai": frozenset({"enabled", "provider", "api_key", "base_url", "model", "max_retries"}),
+    "monitor": frozenset({"currency", "fixer_api_key"}),
+    "notification": frozenset(),
+}
+
+# What the folded-away group is called, per kind.
+SECONDARY_LABEL = {
+    "marketplace": "Vorgaben für alle Jagden dieses Marktplatzes",
+    "item": "Weitere Optionen",
+    "user": "Weitere Optionen",
+    "ai": "Weitere Optionen",
+    "monitor": "Weitere Optionen",
+    "notification": "Weitere Optionen",
+}
+
+# A field's name in the form. The dataclass attribute is an English identifier;
+# prettifying it ("MAX SEARCH INTERVAL") is what made the forms read like a
+# database schema. A field with no entry falls back to its prettified name, so
+# a new option stays usable until it gets a name here.
+LABELS: Dict[str, str] = {
+    # shared
+    "enabled": "Aktiv",
+    "search_phrases": "Suchbegriffe",
+    "keywords": "Muss enthalten",
+    "antikeywords": "Darf nicht enthalten",
+    "description": "Beschreibung für die KI",
+    "min_price": "Mindestpreis",
+    "max_price": "Höchstpreis",
+    "rating": "Mindestnote",
+    "search_interval": "Suchabstand",
+    "max_search_interval": "Suchabstand, höchstens",
+    "notify": "Benachrichtigt",
+    "notify_with": "Benachrichtigungsweg",
+    "exclude_sellers": "Verkäufer ausschliessen",
+    "currency": "Währung",
+    "start_at": "Startzeit",
+    "ai": "KI-Dienste",
+    "with_description": "Beschreibung mitschicken",
+    "prompt": "Prompt",
+    "extra_prompt": "Prompt-Zusatz",
+    "rating_prompt": "Notenskala",
+    "rate_limit_enabled": "Tempolimit",
+    "global_rate_limit": "Tempolimit gesamt",
+    "instance_rate_limit": "Tempolimit je Marktplatz",
+    # facebook
+    "username": "Benutzername",
+    "password": "Passwort",
+    "login_wait_time": "Wartezeit beim Login",
+    "language": "Sprache",
+    "search_city": "Stadt in der URL",
+    "city_name": "Stadt, angezeigt",
+    "radius": "Umkreis",
+    "search_region": "Region",
+    "seller_locations": "Orte der Verkäufer",
+    "condition": "Zustand",
+    "category": "Kategorie",
+    "delivery_method": "Übergabe",
+    "sort_by": "Sortierung",
+    "date_listed": "Höchstalter",
+    "availability": "Verfügbarkeit",
+    # tutti
+    "canton": "Kantone",
+    "max_pages": "Ergebnisseiten",
+    "site_language": "Sprachversion",
+    "fetch_details": "Inseratsseite öffnen",
+    # ai
+    "provider": "Anbieter",
+    "api_key": "API-Schlüssel",
+    "base_url": "Adresse",
+    "model": "Modell",
+    "max_retries": "Versuche",
+    "retry_delay": "Wartezeit zwischen Versuchen",
+    "timeout": "Zeitlimit",
+    # monitor
+    "fixer_api_key": "fixer.io-Schlüssel",
+    "proxy_server": "Proxy-Server",
+    "proxy_bypass": "Proxy-Ausnahmen",
+    "proxy_username": "Proxy-Benutzer",
+    "proxy_password": "Proxy-Passwort",
+    # notification
+    "email": "E-Mail",
+    "remind": "Erneut erinnern",
+    "message_format": "Nachrichtenformat",
+    "pushbullet_token": "Pushbullet-Token",
+    "pushbullet_proxy_server": "Pushbullet-Proxy",
+    "pushbullet_proxy_type": "Pushbullet-Proxytyp",
+    "pushover_user_key": "Pushover User Key",
+    "pushover_api_token": "Pushover API Token",
+    "ntfy_server": "ntfy-Server",
+    "ntfy_topic": "ntfy-Topic",
+    "telegram_token": "Telegram-Bot-Token",
+    "telegram_chat_id": "Telegram-Chat-ID",
+    "smtp_server": "SMTP-Server",
+    "smtp_port": "SMTP-Port",
+    "smtp_from": "Absenderadresse",
+    "smtp_username": "SMTP-Benutzer",
+    "smtp_password": "SMTP-Passwort",
+}
 
 
 @dataclass
@@ -48,6 +221,11 @@ class FieldHint:
     secret: bool = False
     multiline: bool = False
     placeholder: str = ""
+    # A `bool | None` whose unset state means on. The dataclass default is
+    # `None` for both answers, so which one it stands for is only readable in
+    # the code that consumes it (`enabled is False`, `fetch_details or True`).
+    # A checkbox has two states, so the form has to be told which one unset is.
+    on_when_unset: bool = False
     # Overrides the derived requiredness. Some options carry a default the
     # validator then refuses — `search_phrases` defaults to an empty list and
     # `handle_search_phrases` rejects exactly that. The dataclass cannot say so;
@@ -78,7 +256,9 @@ FIELD_HINTS: Dict[str, FieldHint] = {
     "max_search_interval": FieldHint(help="Obergrenze für den zufälligen Abstand."),
     "notify": FieldHint(help="Wer benachrichtigt wird."),
     "exclude_sellers": FieldHint(help="Inserate dieser Verkäufer werden übersprungen."),
-    "enabled": FieldHint(help="Abgeschaltet wird nichts gesucht, bleibt aber erhalten."),
+    "enabled": FieldHint(
+        help="Abgeschaltet wird nichts gesucht, bleibt aber erhalten.", on_when_unset=True
+    ),
     "prompt": FieldHint(help="Ersetzt den Standard-Prompt der KI.", multiline=True),
     "extra_prompt": FieldHint(help="Wird an den Standard-Prompt angehängt.", multiline=True),
     "rating_prompt": FieldHint(help="Ersetzt die Beschreibung der Notenskala.", multiline=True),
@@ -116,7 +296,8 @@ FIELD_HINTS: Dict[str, FieldHint] = {
         help="Sprachversion von tutti.ch.", choices=[lang.value for lang in SiteLanguage]
     ),
     "fetch_details": FieldHint(
-        help="Inseratsseite öffnen, um den Zustand zu lesen. Aus ist schneller."
+        help="Inseratsseite öffnen, um den Zustand zu lesen. Aus ist schneller.",
+        on_when_unset=True,
     ),
     # ---- ai
     "api_key": FieldHint(help="Schlüssel des Anbieters. Ollama braucht keinen.", secret=True),
@@ -139,6 +320,10 @@ FIELD_HINTS: Dict[str, FieldHint] = {
         secret=True,
         placeholder="von fixer.io/product",
     ),
+    "proxy_server": FieldHint(help="Über diesen Proxy wird der Browser geführt."),
+    "proxy_bypass": FieldHint(help="Adressen, die den Proxy umgehen."),
+    "proxy_username": FieldHint(help="Benutzername des Proxys.", secret=True),
+    "proxy_password": FieldHint(help="Passwort des Proxys.", secret=True),
     # ---- notification
     "pushbullet_token": FieldHint(help="Access Token von pushbullet.com.", secret=True),
     "pushover_user_key": FieldHint(help="User Key von pushover.net.", secret=True),
@@ -156,6 +341,7 @@ class FieldSchema:
     """One editable option, as the form needs to know it."""
 
     name: str
+    label: str
     type: str  # "text" | "number" | "boolean" | "list"
     required: bool
     help: str
@@ -164,6 +350,8 @@ class FieldSchema:
     secret: bool
     multiline: bool
     placeholder: str
+    on_when_unset: bool
+    group: str  # "primary" — about this section; "secondary" — folded away
 
 
 def _field_type(annotation: Any) -> str:
@@ -191,16 +379,21 @@ def _is_required(f: "dataclasses.Field[Any]") -> bool:
     )
 
 
-def describe_dataclass(cls: Type[Any]) -> List[FieldSchema]:
+def describe_dataclass(
+    cls: Type[Any], kind: str = "", hide: typing.FrozenSet[str] = frozenset()
+) -> List[FieldSchema]:
     """Turn a config dataclass into the list of options a form should show."""
+    hidden = HIDDEN_BY_KIND.get(kind, frozenset()) | hide
+    primary = PRIMARY_BY_KIND.get(kind)
     described: List[FieldSchema] = []
     for f in dataclasses.fields(cls):
-        if f.name in INTERNAL_FIELDS or f.name.startswith("_"):
+        if f.name in INTERNAL_FIELDS or f.name in hidden or f.name.startswith("_"):
             continue
         hint = FIELD_HINTS.get(f.name, FieldHint())
         described.append(
             FieldSchema(
                 name=f.name,
+                label=LABELS.get(f.name, f.name.replace("_", " ")),
                 type=_field_type(f.type),
                 required=_is_required(f) if hint.required is None else hint.required,
                 help=hint.help,
@@ -209,9 +402,11 @@ def describe_dataclass(cls: Type[Any]) -> List[FieldSchema]:
                 secret=hint.secret,
                 multiline=hint.multiline,
                 placeholder=hint.placeholder,
+                on_when_unset=hint.on_when_unset,
+                group="primary" if primary is None or f.name in primary else "secondary",
             )
         )
-    described.sort(key=lambda item: (not item.required, item.name))
+    described.sort(key=lambda item: (item.group != "primary", not item.required, item.label))
     return described
 
 
@@ -235,6 +430,7 @@ def _variants() -> Dict[str, Dict[str, Type[Any]]]:
         "ai": {name: _ai_config_class(cls) for name, cls in supported_ai_backends.items()},
         "user": {"user": UserConfig},
         "notification": {"notification": NotificationConfig},
+        "monitor": {"monitor": MonitorConfig},
     }
 
 
@@ -246,16 +442,30 @@ def _ai_config_class(backend: Type[Any]) -> Type[Any]:
     return AIConfig
 
 
+def _irrelevant(kind: str, variant: str) -> typing.FrozenSet[str]:
+    """Options a variant inherits but never reads."""
+    if kind not in ("marketplace", "item"):
+        return frozenset()
+    marketplace = supported_marketplaces.get(variant)
+    if marketplace is not None and not marketplace.requires_search_city:
+        return CITY_FIELDS
+    return frozenset()
+
+
 def config_schema() -> Dict[str, Any]:
     """The full description the web UI needs to render every config form."""
     kinds: Dict[str, Any] = {}
     for kind, variants in _variants().items():
         kinds[kind] = {
-            variant: [dataclasses.asdict(f) for f in describe_dataclass(cls)]
+            variant: [
+                dataclasses.asdict(f)
+                for f in describe_dataclass(cls, kind, _irrelevant(kind, variant))
+            ]
             for variant, cls in variants.items()
         }
     return {
         "kinds": kinds,
+        "secondary_labels": SECONDARY_LABEL,
         "marketplaces": sorted(supported_marketplaces),
         "ai_providers": sorted(supported_ai_backends),
     }

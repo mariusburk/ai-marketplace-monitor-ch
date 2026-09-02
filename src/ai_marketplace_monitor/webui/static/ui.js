@@ -296,10 +296,25 @@
     return lists[0].filter((f) => lists.every((list) => list.some((g) => g.name === f.name)));
   }
 
+  function renderFields(kind, host, fields, values) {
+    // Primary first, then one disclosure for the rest. A marketplace and a hunt
+    // share 25 of 30 options through inheritance, so rendering them flat made
+    // both forms an identical wall.
+    const primary = fields.filter((f) => f.group !== "secondary");
+    const secondary = fields.filter((f) => f.group === "secondary");
+    primary.forEach((f) => host.appendChild(control(f, values ? values[f.name] : undefined)));
+    if (!secondary.length) return;
+    const more = el("details", "more");
+    const label = (state.schema && state.schema.secondary_labels && state.schema.secondary_labels[kind]) || "Weitere Optionen";
+    more.appendChild(el("summary", null, `${label} (${secondary.length})`));
+    secondary.forEach((f) => more.appendChild(control(f, values ? values[f.name] : undefined)));
+    host.appendChild(more);
+  }
+
   function control(field, value) {
     const wrap = el("div", "field");
     wrap.dataset.field = field.name;
-    const label = el("label", null, field.name.replace(/_/g, " "));
+    const label = el("label", null, field.label || field.name.replace(/_/g, " "));
     if (field.required) label.appendChild(el("span", "req", " *"));
     wrap.appendChild(label);
 
@@ -307,7 +322,7 @@
     if (field.type === "boolean") {
       input = el("input");
       input.type = "checkbox";
-      input.checked = value === true;
+      input.checked = value === undefined || value === null ? field.on_when_unset : value === true;
     } else if (field.multiline) {
       input = el("textarea");
       input.value = value == null ? "" : String(value);
@@ -346,7 +361,10 @@
     form.querySelectorAll("[name]").forEach((input) => {
       const kind = input.dataset.kind;
       if (kind === "boolean") {
-        if (input.checked) values[input.name] = true;
+        // Written either way. Several of these default to on when absent, so
+        // leaving an unticked box out of the payload made it impossible to
+        // switch anything off through the form.
+        values[input.name] = input.checked;
         return;
       }
       const raw = input.value.trim();
@@ -429,6 +447,7 @@
       (form) => {
         if (!existing) {
           const nameField = el("div", "field");
+          nameField.dataset.role = "name";
           nameField.dataset.field = "__name";
           nameField.appendChild(el("label", null, "Name der Jagd"));
           const input = el("input");
@@ -462,10 +481,7 @@
         };
         const fields = () => {
           body.replaceChildren();
-          fieldsFor("item", chosen).forEach((field) => {
-            if (field.name === "marketplace") return;
-            body.appendChild(control(field, existing ? existing.values[field.name] : undefined));
-          });
+          renderFields("item", body, fieldsFor("item", chosen), existing && existing.values);
         };
         pickField.appendChild(picker);
         form.appendChild(pickField);
@@ -530,9 +546,9 @@
 
   /* ---------- Verbindungen ------------------------------------------------ */
 
-  function sectionEditor(kind, existing, title, hint) {
+  function sectionEditor(kind, existing, title, hint, preset) {
     const variants = Object.keys((state.schema.kinds && state.schema.kinds[kind]) || {});
-    let variant = existing ? existing.variant || variants[0] : variants[0];
+    let variant = existing ? existing.variant || variants[0] : preset || variants[0];
     openModal(
       title,
       hint,
@@ -542,15 +558,20 @@
           nameField.appendChild(el("label", null, "Name"));
           const input = el("input");
           input.id = "section-name-new";
+          // Sections are keyed by name, and a marketplace named after its type
+          // is what every example and the config file itself expect. Follow the
+          // type picker until someone types their own name.
+          input.value = variants.length > 1 ? variant : "";
+          input.addEventListener("input", () => {
+            input.dataset.touched = "1";
+          });
           nameField.appendChild(input);
           form.appendChild(nameField);
         }
         const body = el("div");
         const paint = () => {
           body.replaceChildren();
-          fieldsFor(kind, variant).forEach((field) => {
-            body.appendChild(control(field, existing ? existing.values[field.name] : undefined));
-          });
+          renderFields(kind, body, fieldsFor(kind, variant), existing && existing.values);
         };
         if (variants.length > 1) {
           const choice = el("div", "field");
@@ -564,6 +585,8 @@
           select.value = variant;
           select.addEventListener("change", () => {
             variant = select.value;
+            const nameInput = $("#section-name-new");
+            if (nameInput && !nameInput.dataset.touched) nameInput.value = variant;
             paint();
           });
           choice.appendChild(select);
@@ -662,6 +685,32 @@
       markets.appendChild(row);
     });
 
+    // Without this there is no way to add tutti at all: a fresh install only
+    // writes a facebook section, so the list would stay one row forever.
+    const addMarket = el("div", "row");
+    const missing = (state.schema.marketplaces || []).filter(
+      (name) => !of("marketplace").some((s) => (s.variant || s.name) === name)
+    );
+    addMarket.appendChild(
+      Object.assign(el("div", "who"), {
+        innerHTML: missing.length
+          ? `<b>Noch nicht eingerichtet</b><span>${missing.join(", ")}</span>`
+          : "<b>Weiterer Marktplatz</b><span>Auch mehrere Konten desselben Anbieters sind möglich.</span>",
+      })
+    );
+    const addBtn = el("button", "primary small", "Marktplatz hinzufügen");
+    addBtn.addEventListener("click", () =>
+      sectionEditor(
+        "marketplace",
+        null,
+        "Neuer Marktplatz",
+        "Der Typ bestimmt, welche Optionen es gibt. Der Name darf frei sein.",
+        missing[0]
+      )
+    );
+    addMarket.appendChild(addBtn);
+    markets.appendChild(addMarket);
+
     const users = $("#user-list");
     users.replaceChildren();
     of("user").forEach((section) => {
@@ -681,13 +730,18 @@
       row.appendChild(edit);
       users.appendChild(row);
     });
-    if (!of("user").length) {
-      users.appendChild(
-        Object.assign(el("div", "row"), {
-          innerHTML: '<div class="who"><b>Kein Empfänger</b><span>Ohne Benutzer gibt es keine Benachrichtigungen.</span></div>',
-        })
-      );
-    }
+    const addUser = el("div", "row");
+    addUser.appendChild(
+      Object.assign(el("div", "who"), {
+        innerHTML: of("user").length
+          ? "<b>Weiterer Empfänger</b><span>Jeder Empfänger kann eigene Wege haben.</span>"
+          : "<b>Kein Empfänger</b><span>Ohne Benutzer gibt es keine Benachrichtigungen.</span>",
+      })
+    );
+    const addUserBtn = el("button", of("user").length ? "ghost small" : "primary small", "Empfänger hinzufügen");
+    addUserBtn.addEventListener("click", () => sectionEditor("user", null, "Neuer Empfänger", ""));
+    addUser.appendChild(addUserBtn);
+    users.appendChild(addUser);
 
     const ais = $("#ai-list");
     ais.replaceChildren();
@@ -766,6 +820,8 @@
       const open = drawer.classList.toggle("open");
       toggle.setAttribute("aria-expanded", String(open));
       toggle.textContent = `${open ? "▾" : "▸"} Protokoll`;
+      // app.js skips painting a shut drawer, so ask it to catch up on open.
+      if (open && typeof window.aimmRenderLogs === "function") window.aimmRenderLogs();
     });
 
     $("#cache-clear")?.addEventListener("click", async () => {

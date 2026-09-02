@@ -158,10 +158,8 @@ label { display: block; }
 .field > label,
 .field-label {
   display: block;
-  font: 500 12px/1 var(--sans);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-200);
+  font: 500 13px/1.3 var(--sans);
+  color: var(--ink-100);
   margin-bottom: 7px;
 }
 .field-note {
@@ -809,3 +807,25 @@ label { display: block; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Folded-away options in a section form. A marketplace and a hunt share most
+   of their fields by inheritance; showing all of them flat made every form
+   look the same. */
+.more {
+  border-top: 1px solid var(--edge-soft);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+.more > summary {
+  cursor: pointer;
+  list-style: none;
+  font: 500 13px/1 var(--sans);
+  color: var(--ink-200);
+  padding: 6px 0;
+  user-select: none;
+}
+.more > summary::-webkit-details-marker { display: none; }
+.more > summary::before { content: "▸ "; color: var(--ink-300); }
+.more[open] > summary::before { content: "▾ "; }
+.more > summary:hover { color: var(--ink-000); }
+.more > .field:first-of-type { margin-top: 14px; }
