@@ -1,0 +1,24 @@
+services:
+  aimm:
+    # Lokal bauen statt ghcr.io/bopeng/... zu ziehen — das Upstream-Image
+    # kennt tutti.ch nicht, das gibt es nur in diesem Fork.
+    build: .
+    image: aimm:local
+    container_name: aimm
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Zurich
+      # Facebook-Login. Dient gleichzeitig als Login für das Web-UI, weil das
+      # UI auf 0.0.0.0 lauscht und dort Credentials verlangt — auch wenn nur
+      # tutti.ch überwacht wird. Werte kommen aus .env (nicht im Git).
+      FACEBOOK_USERNAME: ${FACEBOOK_USERNAME}
+      FACEBOOK_PASSWORD: ${FACEBOOK_PASSWORD}
+      # Optional, nur für die KI-Bewertung der Inserate:
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    ports:
+      # Web-UI: Config bearbeiten, Logs verfolgen, Browser-Ansicht für
+      # Facebook-CAPTCHAs (noVNC).
+      - "8467:8467"
+    volumes:
+      # config.toml, cache.db und Logs — geteilt mit dem Host.
+      - ${HOME}/.ai-marketplace-monitor:/root/.ai-marketplace-monitor
