@@ -367,8 +367,32 @@
     return `<div class="log-detail">${lines.join("")}</div>`;
   };
 
+  // Rendering is coalesced and capped. Rebuilding the whole list on every
+  // incoming record was quadratic: a chatty run (a fresh install can emit
+  // megabytes in minutes) rebuilt thousands of rows thousands of times, which
+  // is what made the page crawl and the tab grow to gigabytes.
+  const MAX_RENDERED_ROWS = 500;
+  let renderQueued = false;
+
   const renderLogs = () => {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      renderLogsNow();
+    });
+  };
+
+  // ui.js opens the drawer, and nothing would repaint it until the next record
+  // arrives — which on a quiet monitor could be half an hour.
+  window.aimmRenderLogs = () => renderLogs();
+
+  const renderLogsNow = () => {
     const container = $("#logs");
+    if (!container) return;
+    // Nothing to paint while the drawer is shut, and painting it anyway costs
+    // exactly as much as painting it visibly.
+    if (!container.offsetParent) return;
     const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 16;
     const visible = state.records.filter(
       (r) =>
@@ -379,6 +403,7 @@
         matchesScore(r)
     );
     container.innerHTML = visible
+      .slice(-MAX_RENDERED_ROWS)
       .map((r) => {
         const expanded = state.expanded.has(r.id);
         const kind = r.extra && r.extra.kind;

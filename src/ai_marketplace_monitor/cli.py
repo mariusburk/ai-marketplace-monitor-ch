@@ -36,6 +36,10 @@ password = "${FACEBOOK_PASSWORD}"
 search_city = "houston"
 
 [item.example]
+# A placeholder, switched off so a fresh install does not immediately go
+# searching a city it was never told to care about. Set enabled = true once
+# the search phrases and the marketplace above are yours.
+enabled = false
 # Describe what you want to find. Duplicate this block for each item.
 search_phrases = "gopro hero"
 # min_price = 50
