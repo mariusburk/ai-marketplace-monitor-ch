@@ -8,6 +8,7 @@ from the main thread to that loop via ``loop.call_soon_threadsafe``.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import mimetypes
 import os
@@ -48,6 +49,7 @@ from .auth import (
 )
 from .config_api import ConfigFileService
 from .config_auth import extract_credentials
+from .diagnostics import check_ai, check_notification, clear_cache, health
 from .found_export import iter_found_csv, iter_found_rows
 from .log_handler import LogBroadcastHandler
 from .schema import config_schema
@@ -558,6 +560,46 @@ def create_app(
         if errors:
             return {"ok": False, "errors": errors}
         return {"ok": True, "errors": {}}
+
+    # ------------------------------------------------------------------
+    # Diagnostics: the checks that used to need a shell
+    # ------------------------------------------------------------------
+
+    @app.get("/api/health")
+    async def health_check(_: str = Depends(require_session)) -> Dict[str, Any]:
+        return health(config.config_files)
+
+    @app.post("/api/test/notification")
+    async def notification_check(
+        payload: Dict[str, Any],
+        _: str = Depends(require_session),
+        __: None = Depends(require_csrf),
+    ) -> Dict[str, Any]:
+        """Send one real notification.
+
+        Nothing is mocked: a token the provider rejects is exactly what
+        this is meant to catch, and only a real send catches it.
+        """
+        result = check_notification(config.config_files, str(payload.get("user") or ""))
+        return dataclasses.asdict(result)
+
+    @app.post("/api/test/ai")
+    async def ai_check(
+        payload: Dict[str, Any],
+        _: str = Depends(require_session),
+        __: None = Depends(require_csrf),
+    ) -> Dict[str, Any]:
+        result = check_ai(config.config_files, str(payload.get("ai") or ""))
+        return dataclasses.asdict(result)
+
+    @app.post("/api/cache/clear")
+    async def clear(
+        payload: Dict[str, Any],
+        _: str = Depends(require_session),
+        __: None = Depends(require_csrf),
+    ) -> Dict[str, Any]:
+        result = clear_cache(str(payload.get("scope") or "all"))
+        return dataclasses.asdict(result)
 
     @app.get("/api/logs")
     async def get_logs(

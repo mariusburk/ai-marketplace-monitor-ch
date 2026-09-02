@@ -144,14 +144,33 @@ Each phase is independently shippable and leaves the app working.
       picked up, comments and neighbouring sections survive, and three
       add/delete cycles leave the file byte-identical.
 
-### Phase 3 — Diagnostics *(kills the remaining `docker exec` cases)*
+### Phase 3 — Diagnostics *(done)*
 
-- [ ] `POST /api/test/notification` — send a real test push to one user.
-- [ ] `POST /api/test/ai` — reachability + one sample rating, returns the text.
-- [ ] `GET /api/health` — per marketplace: logged in? per item: last run, next run,
-      hits. AI reachable, notification configured.
-- [ ] `POST /api/cache/clear` with a scope (all / listings / ai).
-- [ ] Tests with mocked backends; no live network in CI.
+- [x] `webui/diagnostics.py` with `check_notification`, `check_ai`,
+      `clear_cache`, `health`. Named `check_*` rather than `test_*`: pytest
+      collects any imported `test_*` callable as a test case, which broke the
+      suite until they were renamed.
+- [x] `POST /api/test/notification` sends a **real** push. Nothing is mocked —
+      a token the provider rejects is exactly what this is for, and only a real
+      send catches it. `force=True`, since the sample counts as already
+      notified from the previous run and a test that works once is not a test.
+- [x] `POST /api/test/ai` connects **and** rates a sample, because a model that
+      answers but cannot follow the rating format is just as broken. It builds
+      a **neutral probe** rather than borrowing one of the user's hunts: a hunt
+      narrowed to "Hero 13" rated the HERO11 sample 1/5, which reads as a
+      broken backend when the backend is fine. Found by running it live. The
+      probe also works before any hunt exists.
+- [x] `GET /api/health` — marketplaces with enabled/needs-login/credentials,
+      items with their counters, the AI backend, and each user's configured
+      notification methods. It deliberately does **not** report a "next run"
+      time: the scheduler lives in the monitor process, the web UI cannot see
+      it, and an invented number is worse than none.
+- [x] `POST /api/cache/clear` with a scope, so clearing listings does not throw
+      away the AI answers.
+- [x] Tests (24 new) with the outermost call patched, so CI stays offline while
+      a regression in the wiring still fails. Verified live: health reports the
+      real counters, the AI test returns 4/5 in ~1 s against the Ollama box,
+      and a real push arrived on the phone.
 
 ### Phase 3.5 — Marketplace selection *(client request)*
 
