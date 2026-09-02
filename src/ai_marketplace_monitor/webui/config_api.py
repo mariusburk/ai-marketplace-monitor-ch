@@ -16,7 +16,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover
     import tomli as tomllib
 
-from ..config import Config
+from ..config import Config, IncompleteConfigError
 from .secrets_redact import SecretMap, redact, restore
 
 
@@ -182,6 +182,12 @@ class ConfigFileService:
             files = [tmp_path if p == self._editable else p for p in self._all]
             try:
                 Config(files, self._logger)
+                return True, None
+            except IncompleteConfigError:
+                # A marketplace, a recipient and a hunt arrive one at a time
+                # through the setup flow; refusing to save the first of them
+                # until all three exist makes the flow impossible to complete.
+                # The monitor waits for the rest and says so in the log.
                 return True, None
             except Exception as e:
                 return False, str(e)

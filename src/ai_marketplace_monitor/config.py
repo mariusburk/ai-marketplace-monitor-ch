@@ -51,6 +51,18 @@ supported_ai_backends = {
 }
 
 
+class IncompleteConfigError(ValueError):
+    """A config that parses and validates, but has nothing to run yet.
+
+    A monitor needs a marketplace, a recipient and something to hunt for. Set
+    up through the web UI those arrive one at a time, so the file is briefly
+    valid-but-not-yet-runnable. The monitor waits for it and says so
+    (`MarketplaceMonitor.load_config_file`); the UI has to be able to save it
+    in the meantime, which it cannot do if this is indistinguishable from a
+    typo.
+    """
+
+
 class ConfigItem(Enum):
     MONITOR = "monitor"
     MARKETPLACE = "marketplace"
@@ -267,14 +279,17 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
 
     def validate_sections(self: "Config", config: Dict[str, Any]) -> None:
         # check for required sections
-        for required_section in ["marketplace", "user", "item"]:
-            if required_section not in config:
-                raise ValueError(f"Config file does not contain a {required_section} section.")
-
-        # check allowed keys in config
+        # An invalid section is a mistake and is reported first; a missing one
+        # is merely a config that is not finished being written.
         for key in config:
             if key not in [x.value for x in ConfigItem]:
                 raise ValueError(f"Config file contains an invalid section {key}.")
+
+        for required_section in ["marketplace", "user", "item"]:
+            if required_section not in config:
+                raise IncompleteConfigError(
+                    f"Config file does not contain a {required_section} section."
+                )
 
     def validate_users(self: "Config") -> None:
         """Check if notified users exists"""

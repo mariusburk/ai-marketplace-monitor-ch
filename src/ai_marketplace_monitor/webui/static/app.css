@@ -829,3 +829,241 @@ label { display: block; }
 .more[open] > summary::before { content: "▾ "; }
 .more > summary:hover { color: var(--ink-000); }
 .more > .field:first-of-type { margin-top: 14px; }
+
+/* ---------- Steps ------------------------------------------------------- */
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 20px;
+}
+.progress .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--edge);
+  transition: background 120ms ease, transform 120ms ease;
+}
+.progress .dot.done { background: var(--ink-300); }
+.progress .dot[aria-current="true"] {
+  background: var(--brass);
+  transform: scale(1.5);
+}
+.progress-text {
+  margin-left: auto;
+  font: 500 11.5px/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-300);
+}
+
+.step-head { margin: 0 0 20px; }
+.step-head h3 {
+  margin: 0 0 5px;
+  font: 600 19px/1.25 var(--display);
+  color: var(--ink-000);
+}
+.step-head p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-200);
+  max-width: 58ch;
+}
+
+/* Editing shows every step at once; the first is open. */
+.step {
+  border-top: 1px solid var(--edge-soft);
+  padding: 4px 0;
+}
+.step:first-child { border-top: 0; }
+.step > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 0;
+  user-select: none;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.step > summary::-webkit-details-marker { display: none; }
+.step > summary::before {
+  content: "▸";
+  color: var(--ink-300);
+  font-size: 11px;
+  width: 10px;
+}
+.step[open] > summary::before { content: "▾"; }
+.step > summary b {
+  font: 600 14px/1 var(--sans);
+  color: var(--ink-000);
+}
+.step > summary span {
+  font-size: 12.5px;
+  color: var(--ink-300);
+}
+.step-body { padding: 4px 0 16px 20px; }
+
+/* ---------- Controls ---------------------------------------------------- */
+
+.default-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-300);
+}
+.field-note + .default-note { margin-top: 3px; }
+
+/* Chip pickers: cantons, channels, marketplaces, recipients. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-pick {
+  border: 1px solid var(--edge-loud);
+  background: transparent;
+  color: var(--ink-100);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: 500 12.5px/1 var(--sans);
+  cursor: pointer;
+  transition: border-color 0.14s var(--ease), background 0.14s var(--ease),
+    color 0.14s var(--ease);
+}
+.chip-pick:hover { border-color: var(--edge-loud); color: var(--ink-000); }
+.chip-pick[aria-pressed="true"] {
+  background: var(--slate-300);
+  border-color: var(--brass);
+  color: var(--ink-000);
+}
+
+/* Rating: one of five, or the default. */
+.segments { display: inline-flex; border: 1px solid var(--edge-loud); border-radius: var(--r-in); overflow: hidden; }
+.segment {
+  border: 0;
+  border-left: 1px solid var(--edge-loud);
+  background: transparent;
+  color: var(--ink-200);
+  padding: 8px 15px;
+  font: 500 13px/1 var(--sans);
+  cursor: pointer;
+  transition: background 0.14s var(--ease), color 0.14s var(--ease);
+}
+.segment:first-child { border-left: 0; }
+.segment:hover { color: var(--ink-000); }
+.segment[aria-pressed="true"] {
+  background: var(--slate-300);
+  color: var(--ink-000);
+  box-shadow: inset 0 -2px 0 var(--brass);
+}
+
+/* A value plus its unit: 30 [Minuten], 300 [CHF]. */
+.pair { display: flex; gap: 8px; }
+.pair > input { flex: 1; min-width: 0; }
+.pair > select { flex: 0 0 auto; width: auto; }
+.pair > input.currency { flex: 0 0 84px; text-transform: uppercase; }
+
+/* Repeating rows: places and start times. */
+.rows { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.rows > button { margin-top: 2px; }
+.row-head {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 0.9fr 0.7fr 34px;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.row-head span {
+  font: 500 11px/1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-300);
+}
+.row-edit {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 0.9fr 0.7fr 34px;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
+}
+.row-edit.narrow { grid-template-columns: 140px 34px; width: auto; }
+.row-edit > button { padding: 6px 0; }
+@media (max-width: 620px) {
+  .row-head { display: none; }
+  .row-edit { grid-template-columns: 1fr 1fr; }
+}
+
+/* A switch reads better as one line than as a label above an empty box.
+   Not `.switch` — that name already belongs to the toggle in Verbindungen. */
+.field > label.check-line,
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 500 13px/1.3 var(--sans);
+  color: var(--ink-100);
+  cursor: pointer;
+  padding: 2px 0;
+}
+.check-line input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--edge-loud);
+  border-radius: var(--r-in);
+  background: var(--slate-300);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.14s var(--ease), border-color 0.14s var(--ease);
+}
+.check-line input[type="checkbox"]:checked {
+  background: var(--brass);
+  border-color: var(--brass);
+}
+.check-line input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 4px;
+  height: 9px;
+  border: solid var(--slate-000);
+  border-width: 0 2px 2px 0;
+  transform: rotate(42deg);
+}
+.check-line:hover input[type="checkbox"] { border-color: var(--brass); }
+
+.form-lead {
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--edge-soft);
+}
+.form-lead:empty { display: none; }
+.modal-footer .spacer { flex: 1; }
+
+/* ---------- Setup path -------------------------------------------------- */
+
+.onboard { margin-bottom: 20px; }
+.onboard-step { align-items: center; }
+.onboard-step .num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-right: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--edge-loud);
+  color: var(--ink-200);
+  font: 600 12px/22px var(--sans);
+  text-align: center;
+}
+.onboard-step:not(.done) .num {
+  border-color: var(--brass);
+  color: var(--brass);
+}
+.onboard-step.done .num {
+  background: var(--slate-300);
+  color: var(--under);
+  border-color: transparent;
+}
+.onboard-step.done .who b { color: var(--ink-200); }

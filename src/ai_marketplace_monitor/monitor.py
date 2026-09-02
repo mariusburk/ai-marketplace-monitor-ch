@@ -13,7 +13,7 @@ from rich.pretty import pretty_repr
 from rich.prompt import Prompt
 
 from .ai import AIBackend, AIResponse
-from .config import Config, supported_ai_backends, supported_marketplaces
+from .config import Config, IncompleteConfigError, supported_ai_backends, supported_marketplaces
 from .listing import Listing
 from .marketplace import Marketplace, TItemConfig, TMarketplaceConfig
 from .notification import NotificationStatus
@@ -82,6 +82,17 @@ class MarketplaceMonitor:
                 return self.config
             except KeyboardInterrupt:
                 raise
+            except IncompleteConfigError as e:
+                # A fresh install is empty on purpose and fills up through the
+                # web UI. Waiting for the rest is the normal state, not a fault.
+                if last_invalid_hash != new_file_hash:
+                    last_invalid_hash = new_file_hash
+                    if self.logger:
+                        self.logger.info(
+                            f"""{hilight("[Config]", "info")} {e} Nothing to search yet — add it in the web UI and I will pick it up."""
+                        )
+                doze(60, self.config_files, self.keyboard_monitor)
+                continue
             except Exception as e:
                 if last_invalid_hash != new_file_hash:
                     last_invalid_hash = new_file_hash

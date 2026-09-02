@@ -80,6 +80,14 @@
 
     <!-- ---------- Funde ---------- -->
     <section class="view active view-wide" id="view-finds">
+      <!-- Shown until a marketplace, a recipient and a hunt all exist. -->
+      <div class="panel onboard" id="onboard" hidden>
+        <h3>Einrichten</h3>
+        <p class="panel-note">
+          Drei Dinge braucht der Monitor, dann läuft er. Die Reihenfolge ist frei.
+        </p>
+        <div id="onboard-steps"></div>
+      </div>
       <div class="stage">
         <nav class="rail" aria-label="Jagden">
           <h3>Jagden</h3>
@@ -234,11 +242,15 @@
       </div>
       <div class="modal-body">
         <p id="form-modal-hint" class="modal-hint" hidden></p>
+        <div id="form-progress" class="progress" hidden></div>
         <form id="section-form" class="section-form" autocomplete="off"></form>
         <div id="form-error" class="error" hidden></div>
       </div>
       <div class="modal-footer">
         <button type="button" id="form-cancel" class="ghost">Abbrechen</button>
+        <span class="spacer"></span>
+        <button type="button" id="form-back" class="ghost" hidden>Zurück</button>
+        <button type="button" id="form-next" class="primary" hidden>Weiter</button>
         <button type="button" id="form-save" class="primary">Speichern</button>
       </div>
     </div>

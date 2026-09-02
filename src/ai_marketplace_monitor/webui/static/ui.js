@@ -231,9 +231,76 @@
     return card;
   }
 
+  /* ---------- Einrichten -------------------------------------------------- */
+
+  // A monitor needs a marketplace, a recipient and a hunt. Set up through the
+  // UI they arrive one at a time, so until all three exist the finds view has
+  // nothing to show — and says what is missing instead of staying blank.
+  const ONBOARD = [
+    {
+      kind: "marketplace",
+      title: "Marktplatz verbinden",
+      why: "Wo gesucht wird. tutti braucht kein Konto, Facebook einen Login.",
+      cta: "Marktplatz anlegen",
+      open: () =>
+        sectionEditor(
+          "marketplace",
+          null,
+          "Neuer Marktplatz",
+          "Der Typ bestimmt, welche Optionen es gibt. Der Name darf frei sein.",
+          (state.schema.marketplaces || []).find(
+            (name) => !of("marketplace").some((s) => (s.variant || s.name) === name)
+          )
+        ),
+    },
+    {
+      kind: "user",
+      title: "Empfänger anlegen",
+      why: "Wohin die Treffer gemeldet werden — Pushbullet, Telegram, ntfy oder E-Mail.",
+      cta: "Empfänger anlegen",
+      open: () => sectionEditor("user", null, "Neuer Empfänger", ""),
+    },
+    {
+      kind: "item",
+      title: "Erste Jagd anlegen",
+      why: "Wonach gesucht wird, in welchem Preisrahmen, ab welcher Note.",
+      cta: "Jagd anlegen",
+      open: () => huntEditor(null),
+    },
+  ];
+
+  function renderOnboarding() {
+    const panel = $("#onboard");
+    const host = $("#onboard-steps");
+    if (!panel || !host) return false;
+    const missing = ONBOARD.filter((step) => !of(step.kind).length);
+    panel.hidden = !missing.length;
+    if (!missing.length) return false;
+    host.replaceChildren();
+    ONBOARD.forEach((step, index) => {
+      const done = !!of(step.kind).length;
+      const row = el("div", `row onboard-step${done ? " done" : ""}`);
+      row.appendChild(el("span", "num", done ? "✓" : String(index + 1)));
+      const who = el("div", "who");
+      who.appendChild(el("b", null, step.title));
+      who.appendChild(
+        el("span", null, done ? of(step.kind).map((s) => s.name).join(", ") : step.why)
+      );
+      row.appendChild(who);
+      if (!done) {
+        const go = el("button", missing[0] === step ? "primary small" : "ghost small", step.cta);
+        go.addEventListener("click", step.open);
+        row.appendChild(go);
+      }
+      host.appendChild(row);
+    });
+    return true;
+  }
+
   /* ---------- Funde ------------------------------------------------------ */
 
   async function loadFeed() {
+    renderOnboarding();
     const feed = $("#feed");
     feed.replaceChildren(el("div", "skeleton"), el("div", "skeleton"));
     try {
@@ -286,149 +353,670 @@
 
   const of = (kind) => state.sections.filter((s) => s.kind === kind);
 
-  function fieldsFor(kind, variants) {
+  function stepsFor(kind, variants) {
     const byKind = (state.schema && state.schema.kinds && state.schema.kinds[kind]) || {};
     const names = Array.isArray(variants) ? variants : [variants].filter(Boolean);
     const lists = names.map((v) => byKind[v]).filter(Boolean);
     if (!lists.length) return Object.values(byKind)[0] || [];
-    // A hunt on several marketplaces may only use options all of them accept,
-    // so the form offers the intersection rather than letting the save fail.
-    return lists[0].filter((f) => lists.every((list) => list.some((g) => g.name === f.name)));
+    if (lists.length === 1) return lists[0];
+    // A hunt on several marketplaces may only use options all of them accept.
+    // Offering the intersection turns "tutti has no category" into a field that
+    // is simply absent, rather than a save that fails after five steps.
+    const shared = (group, list) =>
+      list.filter((f) => lists.every((other) => other.some((s) => s[group].some((g) => g.name === f.name))));
+    return lists[0]
+      .map((step) => ({
+        ...step,
+        fields: shared("fields", step.fields),
+        advanced: shared("advanced", step.advanced),
+      }))
+      .filter((step) => step.fields.length || step.advanced.length || UI_STEPS.has(step.id));
   }
 
-  function renderFields(kind, host, fields, values) {
-    // Primary first, then one disclosure for the rest. A marketplace and a hunt
-    // share 25 of 30 options through inheritance, so rendering them flat made
-    // both forms an identical wall.
-    const primary = fields.filter((f) => f.group !== "secondary");
-    const secondary = fields.filter((f) => f.group === "secondary");
-    primary.forEach((f) => host.appendChild(control(f, values ? values[f.name] : undefined)));
-    if (!secondary.length) return;
-    const more = el("details", "more");
-    const label = (state.schema && state.schema.secondary_labels && state.schema.secondary_labels[kind]) || "Weitere Optionen";
-    more.appendChild(el("summary", null, `${label} (${secondary.length})`));
-    secondary.forEach((f) => more.appendChild(control(f, values ? values[f.name] : undefined)));
-    host.appendChild(more);
-  }
+  // Steps the UI fills itself: the marketplace picker and the channel picker
+  // have no config field behind them, so they arrive empty and stay.
+  const UI_STEPS = new Set(["where", "channels"]);
 
-  function control(field, value) {
-    const wrap = el("div", "field");
-    wrap.dataset.field = field.name;
+  /* ---------- Controls ---------------------------------------------------- */
+  //
+  // One builder per control. Each returns { node, read() }, where read() gives
+  // back an object of field names, so one control can own several fields — the
+  // places editor writes four at once, because Facebook zips them positionally
+  // and a shorter list silently truncates the search.
+
+  const asList = (value) =>
+    value == null ? [] : Array.isArray(value) ? value.slice() : [value];
+
+  function labelFor(field) {
     const label = el("label", null, field.label || field.name.replace(/_/g, " "));
     if (field.required) label.appendChild(el("span", "req", " *"));
-    wrap.appendChild(label);
+    return label;
+  }
 
-    let input;
-    if (field.type === "boolean") {
-      input = el("input");
-      input.type = "checkbox";
-      input.checked = value === undefined || value === null ? field.on_when_unset : value === true;
-    } else if (field.multiline) {
-      input = el("textarea");
-      input.value = value == null ? "" : String(value);
-    } else if (field.choices && field.choices.length && !field.open_choices && field.type !== "list") {
-      input = el("select");
-      input.appendChild(el("option", null, ""));
+  function notesFor(field, suppressDefault) {
+    const out = [];
+    const help = [field.help];
+    if (field.type === "list" && ["text", "combo"].includes(field.control)) {
+      help.push("Mehrere durch Komma trennen.");
+    }
+    if (help.filter(Boolean).length) {
+      out.push(el("p", "field-note", help.filter(Boolean).join(" ")));
+    }
+    // A select carries its default in the empty option, so repeating it
+    // underneath says the same thing twice. Chips have no empty option.
+    if (field.default_note && !suppressDefault) {
+      out.push(el("p", "default-note", field.default_note));
+    }
+    return out;
+  }
+
+  const CONTROLS = {
+    checkbox(field, value) {
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = value === undefined || value === null ? field.on_when_unset : value === true;
+      const line = el("label", "check-line");
+      line.appendChild(box);
+      line.append(field.label || field.name);
+      // Written either way: several of these default to on when absent, so
+      // omitting an unticked box made it impossible to switch anything off.
+      return { node: line, read: () => ({ [field.name]: box.checked }), skipLabel: true };
+    },
+
+    textarea(field, value) {
+      const area = el("textarea");
+      area.value = value == null ? "" : String(value);
+      if (field.placeholder) area.placeholder = field.placeholder;
+      return { node: area, read: () => ({ [field.name]: area.value.trim() || undefined }) };
+    },
+
+    select(field, value) {
+      const select = el("select");
+      const blank = el("option", null, field.default_note || "— nicht gesetzt —");
+      blank.value = "";
+      select.appendChild(blank);
       field.choices.forEach((choice) => {
         const option = el("option", null, choice);
         option.value = choice;
-        input.appendChild(option);
+        select.appendChild(option);
       });
+      select.value = value == null ? "" : String(Array.isArray(value) ? value[0] : value);
+      return {
+        node: select,
+        read: () => ({ [field.name]: select.value || undefined }),
+        quiet: true,
+      };
+    },
+
+    combo(field, value) {
+      const input = el("input");
+      const list = el("datalist");
+      list.id = `dl-${field.name}-${Math.random().toString(36).slice(2, 8)}`;
+      field.choices.forEach((choice) => {
+        const option = el("option");
+        option.value = choice;
+        list.appendChild(option);
+      });
+      input.setAttribute("list", list.id);
+      input.value = asList(value).join(", ");
+      if (field.placeholder) input.placeholder = field.placeholder;
+      const wrap = el("div");
+      wrap.append(input, list);
+      return {
+        node: wrap,
+        read: () => {
+          const raw = input.value.trim();
+          if (!raw) return { [field.name]: undefined };
+          return {
+            [field.name]:
+              field.type === "list" ? raw.split(",").map((v) => v.trim()).filter(Boolean) : raw,
+          };
+        },
+      };
+    },
+
+    multi(field, value) {
+      let picked = asList(value).map(String);
+      const box = el("div", "chips");
+      const paint = () => {
+        box.replaceChildren();
+        field.choices.forEach((choice) => {
+          const chip = el("button", "chip-pick");
+          chip.type = "button";
+          chip.textContent = choice;
+          chip.setAttribute("aria-pressed", String(picked.includes(choice)));
+          chip.addEventListener("click", () => {
+            picked = picked.includes(choice)
+              ? picked.filter((c) => c !== choice)
+              : picked.concat(choice);
+            paint();
+          });
+          box.appendChild(chip);
+        });
+      };
+      paint();
+      return {
+        node: box,
+        read: () => ({
+          [field.name]:
+            picked.length === 0
+              ? undefined
+              : field.type === "list"
+              ? picked.slice()
+              : picked[0],
+        }),
+      };
+    },
+
+    reference(field, value) {
+      let picked = asList(value).map(String);
+      const available = of(field.references).map((s) => s.name);
+      const box = el("div", "chips");
+      if (!available.length) {
+        const label = { user: "Empfänger", ai: "KI-Dienste", notification: "Wege" }[
+          field.references
+        ];
+        box.appendChild(el("p", "default-note", `Noch keine ${label} angelegt.`));
+      }
+      const paint = () => {
+        box.replaceChildren();
+        available.forEach((name) => {
+          const chip = el("button", "chip-pick");
+          chip.type = "button";
+          chip.textContent = name;
+          chip.setAttribute("aria-pressed", String(picked.includes(name)));
+          chip.addEventListener("click", () => {
+            picked = picked.includes(name) ? picked.filter((n) => n !== name) : picked.concat(name);
+            paint();
+          });
+          box.appendChild(chip);
+        });
+      };
+      if (available.length) paint();
+      return {
+        node: box,
+        read: () => ({ [field.name]: picked.length ? picked.slice() : undefined }),
+      };
+    },
+
+    rating(field, value) {
+      let picked = asList(value)[0];
+      const box = el("div", "segments");
+      const paint = () => {
+        box.replaceChildren();
+        [null, 1, 2, 3, 4, 5].forEach((score) => {
+          const seg = el("button", "segment");
+          seg.type = "button";
+          seg.textContent = score === null ? "Standard" : String(score);
+          seg.setAttribute("aria-pressed", String(String(picked ?? "") === String(score ?? "")));
+          seg.addEventListener("click", () => {
+            picked = score === null ? undefined : score;
+            paint();
+          });
+          box.appendChild(seg);
+        });
+      };
+      paint();
+      return {
+        node: box,
+        read: () => ({ [field.name]: picked == null ? undefined : [Number(picked)] }),
+      };
+    },
+
+    duration(field, value) {
+      // Typed `int` in the dataclass, but the validators run a string through
+      // convert_to_seconds first — so "30m" is legal and a number box was not
+      // just clumsy, it could not express what the field accepts.
+      const UNITS = [
+        ["m", "Minuten", 60],
+        ["h", "Stunden", 3600],
+        ["d", "Tage", 86400],
+      ];
+      const amount = el("input");
+      amount.type = "number";
+      amount.min = "1";
+      const unit = el("select");
+      UNITS.forEach(([suffix, name]) => {
+        const option = el("option", null, name);
+        option.value = suffix;
+        unit.appendChild(option);
+      });
+      const text = value == null ? "" : String(value);
+      const parsed = /^(\d+)\s*([mhd])$/.exec(text);
+      if (parsed) {
+        amount.value = parsed[1];
+        unit.value = parsed[2];
+      } else if (/^\d+$/.test(text)) {
+        // seconds from a hand-edited file: show them in the largest unit that
+        // divides evenly, so the number stays the same number
+        const seconds = Number(text);
+        const [suffix, , size] = [...UNITS].reverse().find(([, , s]) => seconds % s === 0) || UNITS[0];
+        amount.value = String(seconds / size);
+        unit.value = suffix;
+      } else {
+        unit.value = "m";
+      }
+      const row = el("div", "pair");
+      row.append(amount, unit);
+      return {
+        node: row,
+        read: () => ({
+          [field.name]: amount.value.trim() ? `${Number(amount.value)}${unit.value}` : undefined,
+        }),
+      };
+    },
+
+    money(field, value) {
+      const text = value == null ? "" : String(value);
+      const parsed = /^\s*([\d.,]+)\s*([A-Za-z]{3})?\s*$/.exec(text);
+      const amount = el("input");
+      amount.type = "number";
+      amount.min = "0";
+      amount.value = parsed ? parsed[1] : "";
+      amount.placeholder = field.placeholder || "";
+      const currency = el("input");
+      currency.className = "currency";
+      currency.maxLength = 3;
+      currency.placeholder = "CHF";
+      currency.value = parsed && parsed[2] ? parsed[2].toUpperCase() : "";
+      const row = el("div", "pair");
+      row.append(amount, currency);
+      return {
+        node: row,
+        read: () => {
+          if (!amount.value.trim()) return { [field.name]: undefined };
+          const unit = currency.value.trim().toUpperCase();
+          return { [field.name]: unit ? `${amount.value.trim()} ${unit}` : amount.value.trim() };
+        },
+      };
+    },
+
+    locations(field, value, values) {
+      // facebook.py zips search_city, city_name, radius and currency; zip stops
+      // at the shortest, so three cities and one currency searches one city.
+      // One row per place makes the four lists the same length by construction.
+      const members = ["city_name", "radius", "currency"];
+      const start = asList(value).map((city, index) => ({
+        search_city: city,
+        city_name: asList(values.city_name)[index] || "",
+        radius: asList(values.radius)[index] ?? "",
+        currency: asList(values.currency)[index] || "",
+      }));
+      let rows = start.length ? start : [{ search_city: "", city_name: "", radius: "", currency: "" }];
+      const box = el("div", "rows");
+      const paint = () => {
+        box.replaceChildren();
+        rows.forEach((row, index) => {
+          const line = el("div", "row-edit");
+          const cell = (key, placeholder, type) => {
+            const input = el("input");
+            if (type) input.type = type;
+            input.placeholder = placeholder;
+            input.value = row[key] == null ? "" : String(row[key]);
+            input.addEventListener("input", () => {
+              row[key] = input.value;
+            });
+            return input;
+          };
+          line.append(
+            cell("search_city", "zurich"),
+            cell("city_name", "Zürich"),
+            cell("radius", "Umkreis", "number"),
+            cell("currency", "CHF")
+          );
+          const drop = el("button", "ghost small danger", "×");
+          drop.type = "button";
+          drop.title = "Ort entfernen";
+          drop.addEventListener("click", () => {
+            rows.splice(index, 1);
+            if (!rows.length) rows.push({ search_city: "", city_name: "", radius: "", currency: "" });
+            paint();
+          });
+          line.appendChild(drop);
+          box.appendChild(line);
+        });
+        const add = el("button", "ghost small", "+ Ort");
+        add.type = "button";
+        add.addEventListener("click", () => {
+          rows.push({ search_city: "", city_name: "", radius: "", currency: "" });
+          paint();
+        });
+        box.appendChild(add);
+      };
+      paint();
+      const head = el("div", "row-head");
+      ["Stadt in der URL", "Angezeigter Name", "Umkreis (Meilen)", "Währung"].forEach((title) =>
+        head.appendChild(el("span", null, title))
+      );
+      const wrap = el("div");
+      wrap.append(head, box);
+      return {
+        node: wrap,
+        read: () => {
+          const filled = rows.filter((row) => String(row.search_city || "").trim());
+          if (!filled.length) return { search_city: undefined };
+          const out = { search_city: filled.map((row) => row.search_city.trim()) };
+          members.forEach((key) => {
+            const column = filled.map((row) => String(row[key] ?? "").trim());
+            // all four lists must stay the same length, so a column is written
+            // whole or not at all
+            out[key] = column.some(Boolean)
+              ? column.map((cell) => (key === "radius" ? Number(cell) || 0 : cell))
+              : undefined;
+          });
+          return out;
+        },
+      };
+    },
+
+    times(field, value) {
+      let rows = asList(value).map(String);
+      if (!rows.length) rows = [""];
+      const box = el("div", "rows");
+      const paint = () => {
+        box.replaceChildren();
+        rows.forEach((entry, index) => {
+          const line = el("div", "row-edit narrow");
+          const input = el("input");
+          input.placeholder = "08:30";
+          input.value = entry;
+          input.addEventListener("input", () => {
+            rows[index] = input.value;
+          });
+          const drop = el("button", "ghost small danger", "×");
+          drop.type = "button";
+          drop.addEventListener("click", () => {
+            rows.splice(index, 1);
+            if (!rows.length) rows.push("");
+            paint();
+          });
+          line.append(input, drop);
+          box.appendChild(line);
+        });
+        const add = el("button", "ghost small", "+ Uhrzeit");
+        add.type = "button";
+        add.addEventListener("click", () => {
+          rows.push("");
+          paint();
+        });
+        box.appendChild(add);
+      };
+      paint();
+      return {
+        node: box,
+        read: () => {
+          const filled = rows.map((r) => r.trim()).filter(Boolean);
+          return { [field.name]: filled.length ? filled : undefined };
+        },
+      };
+    },
+
+    number(field, value) {
+      const input = el("input");
+      input.type = "number";
       input.value = value == null ? "" : String(value);
-    } else {
-      input = el("input");
-      input.type = field.type === "number" ? "number" : "text";
+      if (field.placeholder) input.placeholder = field.placeholder;
+      return {
+        node: input,
+        read: () => ({
+          [field.name]: input.value.trim() ? Number(input.value) : undefined,
+        }),
+      };
+    },
+
+    text(field, value) {
+      const input = el("input");
+      if (field.secret) input.type = "password";
       input.value = Array.isArray(value) ? value.join(", ") : value == null ? "" : String(value);
       if (field.placeholder) input.placeholder = field.placeholder;
-    }
-    input.name = field.name;
-    input.dataset.kind = field.type;
-    wrap.appendChild(input);
+      return {
+        node: input,
+        read: () => {
+          const raw = input.value.trim();
+          if (!raw) return { [field.name]: undefined };
+          return {
+            [field.name]:
+              field.type === "list"
+                ? raw.split(",").map((v) => v.trim()).filter(Boolean)
+                : field.type === "number"
+                ? Number(raw)
+                : raw,
+          };
+        },
+      };
+    },
+  };
 
-    const note = [field.help];
-    if (field.type === "list") note.push("Mehrere durch Komma trennen.");
-    if (field.choices && field.choices.length && (field.open_choices || field.type === "list")) {
-      note.push(`Möglich: ${field.choices.slice(0, 8).join(", ")}${field.choices.length > 8 ? " …" : ""}`);
-    }
-    if (note.filter(Boolean).length) {
-      wrap.appendChild(el("p", "field-note", note.filter(Boolean).join(" ")));
-    }
+  function control(field, values) {
+    const build = CONTROLS[field.control] || CONTROLS.text;
+    const made = build(field, values ? values[field.name] : undefined, values || {});
+    const wrap = el("div", "field");
+    wrap.dataset.field = field.name;
+    (field.composite || []).forEach((member) => {
+      wrap.dataset[`owns${member}`] = "1";
+    });
+    if (!made.skipLabel) wrap.appendChild(labelFor(field));
+    wrap.appendChild(made.node);
+    notesFor(field, made.quiet).forEach((note) => wrap.appendChild(note));
+    wrap.dataset.control = field.control;
+    wrap._read = made.read;
     return wrap;
+  }
+
+  /* ---------- The form itself --------------------------------------------- */
+  //
+  // One definition, two shapes. Creating something walks the steps one at a
+  // time, because a person meeting a marketplace for the first time should be
+  // asked one thing at a time and told where they are. Editing shows every
+  // step at once as disclosures, because someone who came back to change the
+  // canton should not have to click through five screens to reach it.
+
+  function renderStep(host, step, values, hidden) {
+    const wanted = (list) => list.filter((f) => !hidden || !hidden.has(f.name));
+    const main = wanted(step.fields);
+    const extra = wanted(step.advanced);
+    main.forEach((f) => host.appendChild(control(f, values)));
+    if (!extra.length) return;
+    const more = el("details", "more");
+    more.appendChild(el("summary", null, `Feinheiten (${extra.length})`));
+    extra.forEach((f) => more.appendChild(control(f, values)));
+    host.appendChild(more);
   }
 
   function readForm(form) {
     const values = {};
-    form.querySelectorAll("[name]").forEach((input) => {
-      const kind = input.dataset.kind;
-      if (kind === "boolean") {
-        // Written either way. Several of these default to on when absent, so
-        // leaving an unticked box out of the payload made it impossible to
-        // switch anything off through the form.
-        values[input.name] = input.checked;
-        return;
-      }
-      const raw = input.value.trim();
-      if (!raw) return;
-      if (kind === "list") {
-        values[input.name] = raw.split(",").map((v) => v.trim()).filter(Boolean);
-      } else if (kind === "number") {
-        values[input.name] = Number(raw);
-      } else {
-        values[input.name] = raw;
-      }
+    form.querySelectorAll(".field").forEach((wrap) => {
+      if (!wrap._read || wrap.dataset.skip === "1") return;
+      Object.entries(wrap._read()).forEach(([name, value]) => {
+        if (value !== undefined) values[name] = value;
+      });
     });
     return values;
   }
 
-  function openModal(title, hint, build, onSave) {
+  function showErrors(form, errors, only) {
+    form.querySelectorAll(".field").forEach((f) => {
+      f.classList.remove("invalid");
+      f.querySelectorAll(".field-error").forEach((e) => e.remove());
+    });
+    const banner = $("#form-error");
+    banner.hidden = true;
+    let shown = 0;
+    Object.entries(errors || {}).forEach(([name, message]) => {
+      const target = form.querySelector(`.field[data-field="${name}"]`);
+      if (only && !(target && only.contains(target))) return;
+      shown += 1;
+      if (target) {
+        target.classList.add("invalid");
+        target.appendChild(el("p", "field-error", message));
+        target.scrollIntoView({ block: "nearest" });
+      } else {
+        banner.textContent = message;
+        banner.hidden = false;
+      }
+    });
+    return shown;
+  }
+
+  /**
+   * @param opts.kind      section kind, for validation
+   * @param opts.steps     step descriptions from the schema
+   * @param opts.values    current values, or null when creating
+   * @param opts.lead      builds the fields above the steps (name, type, …)
+   * @param opts.decorate  per-step hook, for the pickers the schema cannot know
+   * @param opts.variant   what to validate against
+   * @param opts.onSave    receives the collected values
+   */
+  function openForm(opts) {
     const modal = $("#form-modal");
     const form = $("#section-form");
-    $("#form-modal-title").textContent = title;
-    const hintNode = $("#form-modal-hint");
-    hintNode.textContent = hint || "";
-    hintNode.hidden = !hint;
+    const wizard = !opts.values;
+    let at = 0;
+
+    $("#form-modal-title").textContent = opts.title;
+    const hint = $("#form-modal-hint");
+    hint.textContent = opts.hint || "";
+    hint.hidden = !opts.hint;
     $("#form-error").hidden = true;
-    form.replaceChildren();
-    build(form);
+
+    const progress = $("#form-progress");
+    const lead = el("div", "form-lead");
+    const stage = el("div", "form-stage");
+
+    const paint = () => {
+      const steps = opts.steps();
+      form.replaceChildren();
+      lead.replaceChildren();
+      // The name and the type are asked once, at the start. Repeating them
+      // above every step made the wizard look like it was not progressing.
+      if (opts.lead && (!wizard || at === 0)) opts.lead(lead, paint);
+      form.appendChild(lead);
+      stage.replaceChildren();
+
+      if (wizard) {
+        at = Math.min(at, steps.length - 1);
+        const step = steps[at];
+        progress.hidden = false;
+        progress.replaceChildren();
+        steps.forEach((s, index) => {
+          const dot = el("span", "dot");
+          dot.setAttribute("aria-current", String(index === at));
+          dot.classList.toggle("done", index < at);
+          dot.title = s.title;
+          progress.appendChild(dot);
+        });
+        progress.appendChild(el("span", "progress-text", `Schritt ${at + 1} von ${steps.length}`));
+        const head = el("div", "step-head");
+        head.appendChild(el("h3", null, step.title));
+        if (step.subtitle) head.appendChild(el("p", null, step.subtitle));
+        stage.appendChild(head);
+        const body = el("div");
+        if (opts.decorate) opts.decorate(step, body, paint);
+        renderStep(body, step, opts.values, opts.hidden && opts.hidden());
+        stage.appendChild(body);
+        $("#form-back").hidden = at === 0;
+        $("#form-next").hidden = at >= steps.length - 1;
+        $("#form-save").hidden = at < steps.length - 1;
+      } else {
+        progress.hidden = true;
+        steps.forEach((step, index) => {
+          const panel = el("details", "step");
+          if (index === 0) panel.open = true;
+          const summary = el("summary");
+          summary.appendChild(el("b", null, step.title));
+          if (step.subtitle) summary.appendChild(el("span", null, step.subtitle));
+          panel.appendChild(summary);
+          const body = el("div", "step-body");
+          if (opts.decorate) opts.decorate(step, body, paint);
+          renderStep(body, step, opts.values, opts.hidden && opts.hidden());
+          panel.appendChild(body);
+          stage.appendChild(panel);
+        });
+        $("#form-back").hidden = true;
+        $("#form-next").hidden = true;
+        $("#form-save").hidden = false;
+      }
+      form.appendChild(stage);
+    };
+
+    paint();
     modal.classList.remove("hidden");
 
     const close = () => {
       modal.classList.add("hidden");
-      $("#form-save").replaceWith($("#form-save").cloneNode(true));
+      progress.hidden = true;
+      ["#form-save", "#form-next", "#form-back"].forEach((sel) => {
+        $(sel).replaceWith($(sel).cloneNode(true));
+      });
     };
     $("#form-modal-close").onclick = close;
     $("#form-cancel").onclick = close;
     $(".modal-backdrop").onclick = close;
-    $("#form-save").onclick = async () => {
-      const errorNode = $("#form-error");
-      errorNode.hidden = true;
-      form.querySelectorAll(".field").forEach((f) => {
-        f.classList.remove("invalid");
-        f.querySelectorAll(".field-error").forEach((e) => e.remove());
-      });
+
+    // Carry what is on screen into opts.values before repainting, so stepping
+    // back and forth does not quietly discard what was typed.
+    const remember = () => {
+      opts.values = { ...(opts.values || {}), ...readForm(form) };
+    };
+
+    $("#form-next").onclick = async () => {
+      const typed = readForm(form);
+      let errors = {};
       try {
-        const errors = await onSave(form);
+        const res = await api(`/api/sections/${opts.kind}/validate`, {
+          method: "POST",
+          body: { name: opts.name() || "probe", variant: opts.variant(), values: typed },
+        });
+        errors = res.errors || {};
+      } catch (err) {
+        errors = { "": err.message };
+      }
+      // Only what this step could have caused: a hunt with no search phrase yet
+      // must not block leaving the step that asks for the marketplace.
+      if (showErrors(form, errors, stage.querySelector(".step-head")?.parentNode || stage)) return;
+      const localError = opts.checkStep && opts.checkStep(opts.steps()[at], typed);
+      if (localError && showErrors(form, localError, stage)) return;
+      remember();
+      at += 1;
+      paint();
+    };
+
+    $("#form-back").onclick = () => {
+      remember();
+      at -= 1;
+      paint();
+    };
+
+    $("#form-save").onclick = async () => {
+      showErrors(form, {});
+      remember();
+      try {
+        const errors = await opts.onSave(opts.values || readForm(form));
         if (errors && Object.keys(errors).length) {
-          Object.entries(errors).forEach(([name, message]) => {
-            const target = form.querySelector(`.field[data-field="${name}"]`);
-            if (target) {
-              target.classList.add("invalid");
-              target.appendChild(el("p", "field-error", message));
-            } else {
-              errorNode.textContent = message;
-              errorNode.hidden = false;
-            }
-          });
+          showErrors(form, errors);
           return;
         }
         close();
         await refresh();
         showView(document.querySelector("#nav button[aria-current='true']").dataset.view);
       } catch (err) {
-        errorNode.textContent = err.message;
-        errorNode.hidden = false;
+        const banner = $("#form-error");
+        banner.textContent = err.message;
+        banner.hidden = false;
       }
     };
+  }
+
+  function nameField(host, id, label, placeholder) {
+    const wrap = el("div", "field");
+    wrap.dataset.field = "__name";
+    wrap.appendChild(el("label", null, label));
+    const input = el("input");
+    input.id = id;
+    if (placeholder) input.placeholder = placeholder;
+    wrap.appendChild(input);
+    host.appendChild(wrap);
+    return input;
   }
 
   /* ---------- Jagden ------------------------------------------------------ */
@@ -440,62 +1028,91 @@
         ? existing.values.marketplace.slice()
         : [existing.values.marketplace || marketplaces[0]].filter(Boolean)
       : marketplaces.slice(0, 1);
+    let name = existing ? existing.name : "";
 
-    openModal(
-      existing ? `Jagd ${existing.name}` : "Neue Jagd",
-      "Eine Jagd kann mehrere Marktplätze beobachten. Angeboten werden nur Optionen, die alle gewählten kennen.",
-      (form) => {
-        if (!existing) {
-          const nameField = el("div", "field");
-          nameField.dataset.role = "name";
-          nameField.dataset.field = "__name";
-          nameField.appendChild(el("label", null, "Name der Jagd"));
-          const input = el("input");
-          input.id = "hunt-name";
-          input.placeholder = "gopro";
-          nameField.appendChild(input);
-          form.appendChild(nameField);
-        }
-
-        const pickField = el("div", "field");
-        pickField.appendChild(el("span", "field-label", "Wo gesucht wird"));
-        const picker = el("div", "picker");
-        const body = el("div");
-        const paint = () => {
-          picker.replaceChildren();
-          marketplaces.forEach((name) => {
-            const btn = el("button", "pick");
-            btn.type = "button";
-            btn.setAttribute("aria-pressed", String(chosen.includes(name)));
-            btn.appendChild(el("span", "box"));
-            btn.append(name);
-            btn.addEventListener("click", () => {
-              chosen = chosen.includes(name)
-                ? chosen.filter((n) => n !== name)
-                : chosen.concat(name);
-              paint();
-              fields();
-            });
-            picker.appendChild(btn);
-          });
-        };
-        const fields = () => {
-          body.replaceChildren();
-          renderFields("item", body, fieldsFor("item", chosen), existing && existing.values);
-        };
-        pickField.appendChild(picker);
-        form.appendChild(pickField);
-        form.appendChild(body);
-        paint();
-        fields();
+    openForm({
+      kind: "item",
+      title: existing ? `Jagd ${existing.name}` : "Neue Jagd",
+      hint: existing
+        ? ""
+        : "Eine Jagd beschreibt, wonach gesucht wird. Sie kann mehrere Marktplätze gleichzeitig beobachten.",
+      values: existing ? { ...existing.values } : null,
+      steps: () => stepsFor("item", chosen),
+      variant: () => (chosen.length === 1 ? chosen[0] : chosen),
+      name: () => name,
+      lead: (host) => {
+        if (existing) return;
+        const input = nameField(host, "hunt-name", "Name der Jagd", "gopro");
+        input.value = name;
+        input.addEventListener("input", () => {
+          name = input.value.trim();
+        });
       },
-      async (form) => {
-        const name = existing ? existing.name : ($("#hunt-name")?.value || "").trim();
+      // The marketplace picker belongs at the top of "Wo gesucht wird", but no
+      // config field describes it — `marketplace` is the discriminator.
+      decorate: (step, host, repaint) => {
+        if (step.id !== "where") return;
+        const wrap = el("div", "field");
+        wrap.appendChild(el("span", "field-label", "Marktplätze"));
+        const picker = el("div", "chips");
+        marketplaces.forEach((market) => {
+          const chip = el("button", "chip-pick");
+          chip.type = "button";
+          chip.textContent = market;
+          chip.setAttribute("aria-pressed", String(chosen.includes(market)));
+          chip.addEventListener("click", () => {
+            chosen = chosen.includes(market)
+              ? chosen.filter((m) => m !== market)
+              : chosen.concat(market);
+            repaint();
+          });
+          picker.appendChild(chip);
+        });
+        wrap.appendChild(picker);
+        wrap.appendChild(
+          el(
+            "p",
+            "default-note",
+            chosen.length > 1
+              ? "Angeboten werden nur Optionen, die alle gewählten Marktplätze kennen."
+              : "Leer lassen geht nicht — mindestens einer muss gewählt sein."
+          )
+        );
+        if (!marketplaces.length) {
+          wrap.appendChild(
+            el("p", "field-error", "Noch kein Marktplatz eingerichtet — unter Verbindungen anlegen.")
+          );
+        }
+        host.appendChild(wrap);
+        const inherited = chosen
+          .map((market) => of("marketplace").find((s) => s.name === market))
+          .filter((section) => section && section.values.search_city);
+        if (inherited.length) {
+          host.appendChild(
+            el(
+              "p",
+              "default-note",
+              `Leer lassen heisst: es gilt, was beim Marktplatz steht (${inherited
+                .map((s) => [].concat(s.values.search_city).join(", "))
+                .join(" · ")}).`
+            )
+          );
+        }
+      },
+      checkStep: (step, typed) => {
+        if (step.id === "what" && !name) return { __name: "Bitte einen Namen angeben." };
+        if (step.id === "where" && !chosen.length)
+          return { "": "Mindestens ein Marktplatz muss gewählt sein." };
+        return null;
+      },
+      onSave: async (values) => {
         if (!name) return { __name: "Bitte einen Namen angeben." };
         if (!chosen.length) return { "": "Mindestens ein Marktplatz muss gewählt sein." };
-        const values = readForm(form);
-        delete values.__name;
-        const payload = { name, variant: chosen.length === 1 ? chosen[0] : chosen, values };
+        const payload = {
+          name,
+          variant: chosen.length === 1 ? chosen[0] : chosen,
+          values,
+        };
         const res = existing
           ? await api(`/api/sections/item/${encodeURIComponent(name)}`, {
               method: "PUT",
@@ -503,8 +1120,8 @@
             })
           : await api("/api/sections/item", { method: "POST", body: payload });
         return res.errors;
-      }
-    );
+      },
+    });
   }
 
   function renderHunts() {
@@ -549,33 +1166,45 @@
   function sectionEditor(kind, existing, title, hint, preset) {
     const variants = Object.keys((state.schema.kinds && state.schema.kinds[kind]) || {});
     let variant = existing ? existing.variant || variants[0] : preset || variants[0];
-    openModal(
+    let name = existing ? existing.name : variants.length > 1 ? variant : "";
+    let touched = false;
+    // Which channels a recipient uses. Derived on open from what is filled in,
+    // so an existing recipient shows the ways it already has.
+    const catalogue = (state.schema && state.schema.channels) || [];
+    let picked = catalogue
+      .filter((c) => existing && c.required.every((f) => existing.values[f]))
+      .map((c) => c.id);
+    if (!existing && catalogue.length) picked = [];
+
+    const channelFields = () => {
+      const wanted = new Set();
+      catalogue
+        .filter((c) => picked.includes(c.id))
+        .forEach((c) => [...c.required, ...c.optional].forEach((f) => wanted.add(f)));
+      return wanted;
+    };
+
+    openForm({
+      kind,
       title,
       hint,
-      (form) => {
-        if (!existing) {
-          const nameField = el("div", "field");
-          nameField.appendChild(el("label", null, "Name"));
-          const input = el("input");
-          input.id = "section-name-new";
-          // Sections are keyed by name, and a marketplace named after its type
-          // is what every example and the config file itself expect. Follow the
-          // type picker until someone types their own name.
-          input.value = variants.length > 1 ? variant : "";
-          input.addEventListener("input", () => {
-            input.dataset.touched = "1";
-          });
-          nameField.appendChild(input);
-          form.appendChild(nameField);
-        }
-        const body = el("div");
-        const paint = () => {
-          body.replaceChildren();
-          renderFields(kind, body, fieldsFor(kind, variant), existing && existing.values);
-        };
-        if (variants.length > 1) {
-          const choice = el("div", "field");
-          choice.appendChild(el("label", null, "Typ"));
+      values: existing ? { ...existing.values } : null,
+      steps: () => stepsFor(kind, variant),
+      variant: () => variant,
+      name: () => name,
+      // Everything a channel owns that is not switched on stays out of the DOM,
+      // so an unpicked way cannot be half-filled and then silently ignored.
+      hidden: () => {
+        if (kind !== "user") return null;
+        const shown = channelFields();
+        const all = new Set();
+        catalogue.forEach((c) => [...c.required, ...c.optional].forEach((f) => all.add(f)));
+        return new Set([...all].filter((f) => !shown.has(f)));
+      },
+      lead: (host, repaint) => {
+        if (variants.length > 1 && !existing) {
+          const wrap = el("div", "field");
+          wrap.appendChild(el("label", null, "Typ"));
           const select = el("select");
           variants.forEach((v) => {
             const option = el("option", null, v);
@@ -583,22 +1212,69 @@
             select.appendChild(option);
           });
           select.value = variant;
+          wrap.appendChild(select);
+          host.appendChild(wrap);
           select.addEventListener("change", () => {
             variant = select.value;
-            const nameInput = $("#section-name-new");
-            if (nameInput && !nameInput.dataset.touched) nameInput.value = variant;
-            paint();
+            if (!touched) name = variant;
+            // The type decides which steps exist at all — tutti opens on its
+            // search area, facebook on a login — so the whole form is redrawn.
+            repaint();
           });
-          choice.appendChild(select);
-          form.appendChild(choice);
         }
-        form.appendChild(body);
-        paint();
+        if (existing) return;
+        const input = nameField(
+          host,
+          "section-name-new",
+          "Name",
+          kind === "user" ? "ich" : ""
+        );
+        input.value = name;
+        input.addEventListener("input", () => {
+          touched = true;
+          name = input.value.trim();
+        });
       },
-      async (form) => {
-        const name = existing ? existing.name : ($("#section-name-new")?.value || "").trim();
-        if (!name) return { "": "Bitte einen Namen angeben." };
-        const payload = { name, variant, values: readForm(form) };
+      decorate: (step, host, repaint) => {
+        if (step.id !== "channels") return;
+        const wrap = el("div", "field");
+        const picker = el("div", "chips");
+        catalogue.forEach((channel) => {
+          const chip = el("button", "chip-pick");
+          chip.type = "button";
+          chip.textContent = channel.label;
+          chip.setAttribute("aria-pressed", String(picked.includes(channel.id)));
+          chip.addEventListener("click", () => {
+            picked = picked.includes(channel.id)
+              ? picked.filter((c) => c !== channel.id)
+              : picked.concat(channel.id);
+            repaint();
+          });
+          picker.appendChild(chip);
+        });
+        wrap.appendChild(picker);
+        wrap.appendChild(
+          el(
+            "p",
+            "default-note",
+            picked.length
+              ? `Im nächsten Schritt werden nur die Felder dieser ${
+                  picked.length === 1 ? "Auswahl" : "Auswahlen"
+                } abgefragt.`
+              : "Ohne Weg bekommt dieser Empfänger keine Benachrichtigungen."
+          )
+        );
+        host.appendChild(wrap);
+      },
+      checkStep: (step) => {
+        if (step.id === "channels" && !picked.length)
+          return { "": "Bitte mindestens einen Weg wählen." };
+        if (!name) return { __name: "Bitte einen Namen angeben." };
+        return null;
+      },
+      onSave: async (values) => {
+        if (!name) return { __name: "Bitte einen Namen angeben." };
+        const payload = { name, variant, values };
         const res = existing
           ? await api(`/api/sections/${kind}/${encodeURIComponent(name)}`, {
               method: "PUT",
@@ -606,8 +1282,8 @@
             })
           : await api(`/api/sections/${kind}`, { method: "POST", body: payload });
         return res.errors;
-      }
-    );
+      },
+    });
   }
 
   function testRow(row, label, run) {

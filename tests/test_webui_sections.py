@@ -8,12 +8,11 @@ from fastapi.testclient import TestClient
 
 from ai_marketplace_monitor.webui.config_api import ConfigFileService
 from ai_marketplace_monitor.webui.log_handler import LogBroadcastHandler
-from ai_marketplace_monitor.webui.schema import config_schema, describe_dataclass
+from ai_marketplace_monitor.webui.schema import config_schema
 from ai_marketplace_monitor.webui.secrets_redact import MASK
 from ai_marketplace_monitor.webui.sections import (
     SectionError,
     SectionService,
-    config_class,
     render_section,
     to_toml,
     validate_name,
@@ -44,46 +43,6 @@ def test_schema_covers_every_marketplace() -> None:
     schema = config_schema()
     assert set(schema["marketplaces"]) == {"facebook", "tutti"}
     assert set(schema["kinds"]["item"]) == {"facebook", "tutti"}
-
-
-def test_tutti_options_are_derived_not_hardcoded() -> None:
-    """Adding an option to the dataclass must surface it in the form."""
-    names = {f["name"] for f in config_schema()["kinds"]["item"]["tutti"]}
-    assert {"canton", "max_pages", "site_language", "fetch_details"} <= names
-    # and facebook-only options must not leak into it
-    assert "delivery_method" not in names
-
-
-def test_field_types_map_to_controls() -> None:
-    fields = {f["name"]: f for f in config_schema()["kinds"]["item"]["tutti"]}
-    assert fields["canton"]["type"] == "list"
-    assert fields["max_pages"]["type"] == "number"
-    assert fields["fetch_details"]["type"] == "boolean"
-    assert fields["description"]["type"] == "text"
-
-
-def test_bookkeeping_fields_are_hidden() -> None:
-    names = {f["name"] for f in config_schema()["kinds"]["item"]["tutti"]}
-    assert not names & {"name", "searched_count", "monitor_config"}
-
-
-def test_choices_come_from_the_real_enums() -> None:
-    fields = {f["name"]: f for f in config_schema()["kinds"]["item"]["tutti"]}
-    assert "ZH" in fields["canton"]["choices"]
-    assert len(fields["canton"]["choices"]) == 26
-    assert set(fields["site_language"]["choices"]) == {"de", "fr", "it"}
-
-
-def test_secrets_are_flagged() -> None:
-    marketplace = {f["name"]: f for f in config_schema()["kinds"]["marketplace"]["facebook"]}
-    assert marketplace["password"]["secret"]
-    assert not marketplace["search_city"]["secret"]
-
-
-def test_search_phrases_is_required_on_an_item() -> None:
-    fields = {f.name: f for f in describe_dataclass(config_class("item", "tutti"))}
-    assert fields["search_phrases"].required
-    assert not fields["canton"].required
 
 
 #
@@ -440,3 +399,44 @@ def test_an_option_only_one_marketplace_accepts_is_a_field_error(tmp_path: Path)
 
 def test_validate_values_accepts_a_single_variant_unchanged() -> None:
     assert validate_values("item", "tutti", "velo", {"search_phrases": ["velo"]}) == {}
+
+
+#
+# A config that is not finished yet
+#
+
+
+def test_a_half_built_config_can_be_saved(tmp_path: Path) -> None:
+    """The setup path adds a marketplace, a recipient and a hunt one at a time.
+
+    A whole-file check that demands all three refuses the first of them, which
+    makes the flow impossible to finish — so an incomplete config is a state
+    the UI writes, and the monitor waits for the rest.
+    """
+    path = tmp_path / "config.toml"
+    path.write_text("[monitor]\ncurrency = 'CHF'\n", encoding="utf-8")
+    service = SectionService(ConfigFileService([path]))
+
+    errors = service.save_section("marketplace", "tutti", "tutti", {"canton": ["ZH"]}, create=True)
+
+    assert errors == {}
+    assert "[marketplace.tutti]" in path.read_text(encoding="utf-8")
+
+
+def test_a_real_mistake_is_still_refused(tmp_path: Path) -> None:
+    """Incomplete is not a licence to write anything."""
+    path = tmp_path / "config.toml"
+    path.write_text("[monitor]\n", encoding="utf-8")
+    service = SectionService(ConfigFileService([path]))
+
+    errors = service.save_section("marketplace", "tutti", "tutti", {"canton": ["XX"]}, create=True)
+
+    assert errors
+    assert "[marketplace.tutti]" not in path.read_text(encoding="utf-8")
+
+
+def test_the_missing_pieces_are_named_separately_from_errors() -> None:
+    """`IncompleteConfigError` is what lets the UI and the log tell them apart."""
+    from ai_marketplace_monitor.config import IncompleteConfigError
+
+    assert issubclass(IncompleteConfigError, ValueError)

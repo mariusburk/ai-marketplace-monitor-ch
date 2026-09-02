@@ -21,33 +21,19 @@ app = typer.Typer()
 _DEFAULT_CONFIG_TEMPLATE = """\
 # AI Marketplace Monitor — configuration file
 #
-# Created automatically on first run. Edit in the web UI (or any
-# editor) and save — the monitor picks up changes within a second.
+# Created automatically on first run, deliberately empty: the web UI walks you
+# through adding a marketplace, a recipient and your first hunt, and writes
+# them here. Until all three exist the monitor waits and says so in the log.
 #
-# The web UI requires no password on localhost (127.0.0.1). To expose
-# it on a network interface (--webui-host), set username and password
-# below or via FACEBOOK_USERNAME / FACEBOOK_PASSWORD env vars.
+# Everything the UI writes can also be edited here by hand — it picks changes
+# up within a second, from either side.
 #
 # See https://ai-marketplace-monitor.readthedocs.io/ for a full reference.
 
-[marketplace.facebook]
-username = "${FACEBOOK_USERNAME}"
-password = "${FACEBOOK_PASSWORD}"
-search_city = "houston"
-
-[item.example]
-# A placeholder, switched off so a fresh install does not immediately go
-# searching a city it was never told to care about. Set enabled = true once
-# the search phrases and the marketplace above are yours.
-enabled = false
-# Describe what you want to find. Duplicate this block for each item.
-search_phrases = "gopro hero"
-# min_price = 50
-# max_price = 300
-
-[user.me]
-# One of these notification channels is required.
-# pushbullet_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+[monitor]
+# The currency prices are shown in. Prices quoted in another are converted,
+# with the original kept alongside.
+currency = "CHF"
 """
 
 
