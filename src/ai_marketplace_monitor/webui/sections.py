@@ -24,9 +24,10 @@ from .config_api import ConfigFileService, scan_sections
 from .schema import INTERNAL_FIELDS, describe_dataclass
 from .secrets_redact import MASK
 
-# Section kinds the UI may edit. `monitor`, `region` and `translation` stay in
-# the expert editor: they are rare, and two of them are lists of lists.
-EDITABLE_KINDS = ("marketplace", "item", "user", "notification", "ai")
+# Section kinds the UI may edit. `region` and `translation` stay in the expert
+# editor: they are rare and both are lists of lists. `monitor` is here because
+# the display currency and the fixer.io key belong in a settings form.
+EDITABLE_KINDS = ("marketplace", "item", "user", "notification", "ai", "monitor")
 
 # A name has to survive being written as [kind.name], so no dots or brackets.
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")

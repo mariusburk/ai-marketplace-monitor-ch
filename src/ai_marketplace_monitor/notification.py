@@ -337,10 +337,14 @@ class PushNotificationConfig(NotificationConfig):
             else:
                 desc = listing.description[: self.with_description] + "..."
 
-            # Shown right after the price, where it is easiest to read.
+            # The converted figure leads and the marketplace's own number
+            # follows in brackets: the conversion is an estimate, the listing's
+            # price is the fact, so neither may hide the other.
             price_line = listing.price
+            if listing.converted_price:
+                price_line = f"{listing.converted_price} ({listing.price})"
             if listing.price_comparison:
-                price_line = f"{listing.price} ({listing.price_comparison})"
+                price_line = f"{price_line} ({listing.price_comparison})"
 
             if self.message_format == "plain_text":
                 desc_newline = "\n" if desc else ""

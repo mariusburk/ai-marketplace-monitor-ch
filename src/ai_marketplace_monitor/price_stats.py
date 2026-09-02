@@ -13,7 +13,7 @@ Hero 13 offers rather than against every camera on the site.
 
 from dataclasses import dataclass
 from statistics import median
-from typing import Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence
 
 # A handful of offers says very little about a market price, so no comparison
 # is reported below this many reference prices.
@@ -115,3 +115,37 @@ def describe_price(
         f"of {stats.count} comparable listings{describe_composition(composition)} "
         f"(range {format_amount(currency, stats.minimum)}-{stats.maximum})"
     )
+
+
+def convert_for_display(
+    amount: int | None,
+    source_currency: str,
+    monitor_config: Any,
+    logger: Any = None,
+) -> str:
+    """Render a price in the configured display currency, or "" if unneeded.
+
+    Empty means "show the original alone": either no display currency is set,
+    the marketplace already quotes it, or no rate could be found. The original
+    is never replaced — a converted figure is an estimate and the listing's own
+    number is the fact.
+    """
+    from .currency import convert
+
+    target = getattr(monitor_config, "currency", None) if monitor_config else None
+    if not target or amount is None or amount <= 0:
+        return ""
+    source = (source_currency or "").upper()
+    if not source or source == target.upper():
+        return ""
+
+    result = convert(
+        amount,
+        source,
+        target,
+        api_key=getattr(monitor_config, "fixer_api_key", None),
+        logger=logger,
+    )
+    if result is None:
+        return ""
+    return format_amount(result.target, result.amount)

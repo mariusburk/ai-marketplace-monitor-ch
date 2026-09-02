@@ -17,7 +17,7 @@ from rich.pretty import pretty_repr
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
 from .price_index import PriceObservation, record, reference
-from .price_stats import describe_price
+from .price_stats import convert_for_display, describe_price
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -581,8 +581,12 @@ class FacebookMarketplace(Marketplace):
                 )
                 stats, composition = reference(item_config.name, currency_label)
                 for listing in found_listings:
+                    amount = parse_price(listing.price)
                     listing.price_comparison = describe_price(
-                        parse_price(listing.price), stats, currency_label, composition
+                        amount, stats, currency_label, composition
+                    )
+                    listing.converted_price = convert_for_display(
+                        amount, currency or "", self.config.monitor_config, self.logger
                     )
 
                 # go to each item and get the description

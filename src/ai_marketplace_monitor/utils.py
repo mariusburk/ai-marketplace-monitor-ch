@@ -80,6 +80,7 @@ class CacheType(Enum):
     # Prices a hunt has seen, pooled across marketplaces. Outlives the search
     # that recorded them so a tutti run can use what facebook saw earlier.
     PRICE_OBSERVATION = "price-observations"
+    EXCHANGE_RATES = "exchange-rates"
 
 
 class CounterItem(Enum):
@@ -329,6 +330,29 @@ class MonitorConfig(BaseConfig):
     proxy_bypass: str | None = None
     proxy_username: str | None = None
     proxy_password: str | None = None
+    # The currency every price is shown in. Prices from a marketplace that
+    # quotes something else are converted to it and the original kept alongside.
+    currency: str | None = None
+    # fixer.io access key. Without one, conversion falls back to the ECB
+    # snapshot bundled with `currency_converter` — older, but always available.
+    fixer_api_key: str | None = None
+
+    def handle_currency(self: "MonitorConfig") -> None:
+        if self.currency is None:
+            return
+        if not isinstance(self.currency, str):
+            raise ValueError("Monitor currency must be a string such as CHF.")
+        self.currency = self.currency.upper()
+        try:
+            Currency(self.currency)
+        except ValueError as e:
+            raise ValueError(f"Monitor currency {self.currency} is not recognized.") from e
+
+    def handle_fixer_api_key(self: "MonitorConfig") -> None:
+        if self.fixer_api_key is None:
+            return
+        if not isinstance(self.fixer_api_key, str):
+            raise ValueError("Monitor fixer_api_key must be a string.")
 
     def handle_proxy_server(self: "MonitorConfig") -> None:
         if self.proxy_server is None:

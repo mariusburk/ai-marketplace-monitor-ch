@@ -126,6 +126,19 @@ FIELD_HINTS: Dict[str, FieldHint] = {
     "model": FieldHint(help="Modellname beim Anbieter.", placeholder="qwen2.5:7b"),
     "provider": FieldHint(help="Welcher Dienst.", choices=sorted(supported_ai_backends)),
     "max_retries": FieldHint(help="Versuche, bevor aufgegeben wird."),
+    # ---- monitor
+    "currency": FieldHint(
+        help="Währung, in der alle Preise angezeigt werden. Preise anderer "
+        "Währungen werden umgerechnet, der Originalpreis bleibt daneben stehen.",
+        choices=["CHF", "EUR", "USD", "GBP"],
+        open_choices=True,
+    ),
+    "fixer_api_key": FieldHint(
+        help="Zugangsschlüssel von fixer.io für aktuelle Wechselkurse. "
+        "Ohne Schlüssel wird der mitgelieferte EZB-Stand verwendet — älter, aber immer da.",
+        secret=True,
+        placeholder="von fixer.io/product",
+    ),
     # ---- notification
     "pushbullet_token": FieldHint(help="Access Token von pushbullet.com.", secret=True),
     "pushover_user_key": FieldHint(help="User Key von pushover.net.", secret=True),
