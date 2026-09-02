@@ -14,6 +14,9 @@ services:
       # Vorlage siehe .env.example.
       FACEBOOK_USERNAME: ${FACEBOOK_USERNAME}
       FACEBOOK_PASSWORD: ${FACEBOOK_PASSWORD}
+      # Pushbullet-Token für die Benachrichtigungen. Wird in der
+      # config.toml als ${PUSHBULLET_TOKEN} referenziert.
+      PUSHBULLET_TOKEN: ${PUSHBULLET_TOKEN:-}
       # Optional, nur für die KI-Bewertung der Inserate:
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     ports:
