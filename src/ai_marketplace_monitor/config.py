@@ -20,13 +20,28 @@ from .ai import (
     TAIConfig,
 )
 from .facebook import FacebookMarketplace
-from .marketplace import TItemConfig, TMarketplaceConfig
+from .marketplace import MarketPlace, TItemConfig, TMarketplaceConfig
 from .notification import NotificationConfig
 from .region import RegionConfig
+from .tutti import TuttiMarketplace
 from .user import User, UserConfig
 from .utils import MonitorConfig, Translator, hilight, merge_dicts
 
-supported_marketplaces = {"facebook": FacebookMarketplace}
+supported_marketplaces = {"facebook": FacebookMarketplace, "tutti": TuttiMarketplace}
+
+
+def default_market_type(marketplace_name: str) -> str:
+    """Market type assumed when a marketplace section does not specify one.
+
+    A section named after a supported marketplace (``[marketplace.tutti]``)
+    defaults to that marketplace; anything else keeps the historical facebook
+    default.
+    """
+    if marketplace_name in supported_marketplaces:
+        return marketplace_name
+    return MarketPlace.FACEBOOK.value
+
+
 supported_ai_backends = {
     "deepseek": DeepSeekBackend,
     "gemini": GeminiBackend,
@@ -142,14 +157,18 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
         # check for required fields in each marketplace
         self.marketplace = {}
         for marketplace_name, marketplace_config in config["marketplace"].items():
-            market_type = marketplace_config.get("market_type", "facebook")
+            market_type = marketplace_config.get(
+                "market_type", default_market_type(marketplace_name)
+            )
             if market_type not in supported_marketplaces:
                 raise ValueError(
                     f"Marketplace {hilight(market_type)} is not supported. Supported marketplaces are: {supported_marketplaces.keys()}"
                 )
             marketplace_class = supported_marketplaces[market_type]
             self.marketplace[marketplace_name] = marketplace_class.get_config(
-                name=marketplace_name, monitor_config=self.monitor, **marketplace_config
+                name=marketplace_name,
+                monitor_config=self.monitor,
+                **{**marketplace_config, "market_type": market_type},
             )
             lan = self.marketplace[marketplace_name].language
             if lan is None:
@@ -186,7 +205,7 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
 
             for marketplace_name, markerplace_config in config["marketplace"].items():
                 marketplace_class = supported_marketplaces[
-                    markerplace_config.get("market_type", "facebook")
+                    markerplace_config.get("market_type", default_market_type(marketplace_name))
                 ]
                 if (
                     "marketplace" not in item_config
@@ -307,6 +326,12 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
                     item_config.marketplace is None
                     or item_config.marketplace == marketplace_config.name
                 ):
+                    marketplace_class = supported_marketplaces[
+                        marketplace_config.market_type
+                        or default_market_type(marketplace_config.name)
+                    ]
+                    if not marketplace_class.requires_search_city:
+                        continue
                     if not item_config.search_city and not marketplace_config.search_city:
                         raise ValueError(
                             f"No search_city or search_region is specified for {item_config.name} or market {marketplace_config.name}"

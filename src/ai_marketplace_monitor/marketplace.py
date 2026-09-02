@@ -20,6 +20,7 @@ from .utils import (
 
 class MarketPlace(Enum):
     FACEBOOK = "facebook"
+    TUTTI = "tutti"
 
 
 @dataclass
@@ -367,7 +368,7 @@ class MarketItemCommonConfig(BaseConfig):
 class MarketplaceConfig(MarketItemCommonConfig):
     """Generic marketplace config"""
 
-    # name of market, right now facebook is the only supported one
+    # name of the market, one of the values defined in the MarketPlace enum
     market_type: str | None = MarketPlace.FACEBOOK.value
     language: str | None = None
     monitor_config: MonitorConfig | None = None
@@ -377,10 +378,12 @@ class MarketplaceConfig(MarketItemCommonConfig):
             return
         if not isinstance(self.market_type, str):
             raise ValueError(f"Marketplace {hilight(self.market_type)} market must be a string.")
-        if self.market_type.lower() != MarketPlace.FACEBOOK.value:
+        supported = [x.value for x in MarketPlace]
+        if self.market_type.lower() not in supported:
             raise ValueError(
-                f"Marketplace {hilight(self.market_type)} market must be {MarketPlace.FACEBOOK.value}."
+                f"Marketplace {hilight(self.market_type)} market must be one of {', '.join(supported)}."
             )
+        self.market_type = self.market_type.lower()
 
     def handle_language(self: "MarketplaceConfig") -> None:
         if self.language is None:
@@ -452,6 +455,14 @@ TItemConfig = TypeVar("TItemConfig", bound=ItemConfig)
 
 
 class Marketplace(Generic[TMarketplaceConfig, TItemConfig]):
+    # whether the marketplace needs a username/password to be searched. Marketplaces
+    # that can be browsed anonymously (e.g. tutti) set this to False so that the
+    # monitor does not wait for credentials that will never arrive.
+    requires_login: bool = True
+    # whether a search_city (or search_region) must be configured. Site-wide
+    # marketplaces that do not scope searches by city set this to False.
+    requires_search_city: bool = True
+
     def __init__(
         self: "Marketplace",
         name: str,

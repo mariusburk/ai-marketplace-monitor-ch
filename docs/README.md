@@ -4,6 +4,7 @@
 
 - [AI Services](#ai-services)
 - [Marketplaces](#marketplaces)
+- [Tutti marketplace options](#tutti-marketplace-options)
 - [Users](#users)
 - [Notification](#notification)
 - [Email notification](#email-notification)
@@ -82,10 +83,10 @@ One or more sections `marketplace.name` show the options for interacting with va
 
 | Option             | Requirement | DataType | Description                                                                                                      |
 | ------------------ | ----------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
-| `market_type`      | Optional    | String   | The supported marketplace. Currently, only `facebook` is supported.                                              |
-| `username`         | Optional    | String   | Username can be entered manually or kept in the config file. Falls back to `FACEBOOK_USERNAME` environment variable if not set. |
-| `password`         | Optional    | String   | Password can be entered manually or kept in the config file. Falls back to `FACEBOOK_PASSWORD` environment variable if not set. |
-| `login_wait_time`  | Optional    | Integer  | Time (in seconds) to wait before searching to allow enough time to enter CAPTCHA. Defaults to 60.                |
+| `market_type`      | Optional    | String   | The marketplace to search, one of `facebook` or `tutti`. Defaults to the section name when that name is a supported marketplace, otherwise to `facebook`. |
+| `username`         | Optional    | String   | _Facebook only._ Username can be entered manually or kept in the config file. Falls back to `FACEBOOK_USERNAME` environment variable if not set. |
+| `password`         | Optional    | String   | _Facebook only._ Password can be entered manually or kept in the config file. Falls back to `FACEBOOK_PASSWORD` environment variable if not set. |
+| `login_wait_time`  | Optional    | Integer  | _Facebook only._ Time (in seconds) to wait before searching to allow enough time to enter CAPTCHA. Defaults to 60. |
 | `language`         | Optional    | String   | Language for webpages                                                                                            |
 | **Common options** |             |          | Options listed in the [Common options](#common-options) section below that provide default values for all items. |
 
@@ -93,6 +94,59 @@ One or more sections `marketplace.name` show the options for interacting with va
 2. `username` and `password` can be provided in three ways (in order of priority): directly in the config file, via the `${ENV_VAR}` syntax (e.g. `password = '${MY_FB_PASS}'`), or automatically from the `FACEBOOK_USERNAME` and `FACEBOOK_PASSWORD` environment variables. If none are set, the monitor runs in anonymous mode.
 3. If `language="LAN"` is specified, it must match to one of `translation` sections, defined by yourself or in the system configuration file. The system will try exact match (e.g. `es` to `es` or `zh_CN` to `zh_CN`), then partial match (e.g. `es` to `es_CO` or `es_CO` to `es`).
 4. Please see [Support for non-English languages](../README.md#support-for-non-english-languages) on how to set this option and define your own translations.
+
+### Tutti marketplace options
+
+[tutti.ch](https://www.tutti.ch) is the largest Swiss classifieds site. It needs
+no account, so a `marketplace.tutti` section requires no `username` or
+`password`, and it searches the whole of Switzerland rather than a city — so
+`search_city`, `search_region` and `radius` do not apply to it.
+
+The section must be named `marketplace.tutti`; `market_type = 'tutti'` is then
+implied and may be omitted.
+
+```toml
+[marketplace.tutti]
+canton = ['ZH', 'BE', 'AG']
+max_pages = 2
+site_language = 'de'
+search_interval = '1h'
+notify = 'user1'
+
+[item.rennvelo]
+marketplace = 'tutti'
+search_phrases = 'rennvelo'
+keywords = "rennvelo OR rennrad"
+antikeywords = 'defekt'
+min_price = 100
+max_price = '600 CHF'
+condition = 'Gebraucht'
+```
+
+| Option          | Requirement | DataType        | Description                                                                                                                       |
+| --------------- | ----------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `canton`        | Optional    | String or List  | Only accept listings from these cantons, given as the two-letter abbreviations (`ZH`, `BE`, `TI`, ...). Defaults to all of Switzerland. |
+| `max_pages`     | Optional    | Integer         | Number of result pages to retrieve per search phrase. Each page holds 30 listings. Defaults to `1`.                                |
+| `site_language` | Optional    | String          | Language of tutti.ch to search, one of `de`, `fr` or `it`. Defaults to `de`. This only selects the site locale and is unrelated to the `language` (translation) option. |
+| `condition`     | Optional    | String or List  | Only accept listings whose condition matches, e.g. `Neu` or `Gebraucht`. The wording follows `site_language`, and listings in categories that record no condition are excluded when this is set. |
+| `fetch_details` | Optional    | Boolean         | Whether to open each listing page to read its condition. Defaults to `true`. Set to `false` to search using only the result pages, which is faster and makes far fewer requests, at the cost of leaving `condition` empty. |
+
+Notes:
+
+1. `min_price` and `max_price` are honoured, but tutti keeps its price filter in
+   client-side state rather than in the URL, so the bounds are applied to the
+   listings after they are retrieved. A bound may name a currency
+   (`max_price = '600 CHF'`, `max_price = '500 EUR'`); non-CHF amounts are
+   converted to Swiss francs.
+2. Prices are read as tutti renders them, so rentals keep their period
+   (`CHF 1'490.- pro Monat`) and giveaways stay `Gratis`, which counts as `0`
+   when comparing against `min_price`/`max_price`. A listing with no comparable
+   price (for instance "Preis auf Anfrage") is never dropped by a price bound.
+3. Not every tutti category records a condition. When it is absent, `condition`
+   on the listing is an empty string.
+4. tutti searches are national. To restrict results geographically, use `canton`
+   (or the common `seller_locations` option, which matches against the
+   `8570 Weinfelden, TG` style location text).
 
 ### Users
 

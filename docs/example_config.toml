@@ -25,6 +25,16 @@ seller_locations = ['city', 'surrounding city']
 notify = 'user1'
 exclude_sellers = []
 
+# tutti.ch (Switzerland). It needs no account and searches the whole country,
+# so no username, password or search_city is required. Only items that set
+# `marketplace = 'tutti'` are searched here.
+[marketplace.tutti]
+canton = ['ZH', 'BE', 'AG']   # two-letter Swiss canton codes
+max_pages = 2                 # 30 listings per page
+site_language = 'de'          # de, fr or it
+search_interval = '1h'
+notify = 'user1'
+
 #
 # Users and Notifications
 #
@@ -54,6 +64,16 @@ search_region = 'usa'
 search_interval = '1d'
 delivery_method = 'shipping'
 seller_locations = []
+
+# An item searched on tutti.ch instead of facebook.
+[item.rennvelo]
+marketplace = 'tutti'
+search_phrases = 'rennvelo'
+keywords = "rennvelo OR rennrad"
+antikeywords = 'defekt'
+min_price = 100
+max_price = '600 CHF'
+condition = 'Gebraucht'
 
 [item.name2]
 search_phrases = ['search word one', 'search word two']

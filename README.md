@@ -57,6 +57,7 @@ AI: Great deal; A well-priced, well-maintained camera meets all search criteria,
 - Filter by price and location
 - Exclude irrelevant results and spammers
 - Support for different Facebook Marketplace layouts
+- Two marketplaces: Facebook Marketplace and [tutti.ch](https://www.tutti.ch) (Switzerland)
 
 🤖 **AI-Powered**
 
@@ -166,6 +167,20 @@ search_phrases = 'vintage collectible'
 search_region = 'usa'
 delivery_method = 'shipping'
 seller_locations = []
+```
+
+**Search tutti.ch (Switzerland) for a road bike in selected cantons:**
+
+```toml
+[marketplace.tutti]
+canton = ['ZH', 'BE', 'AG']   # two-letter Swiss canton codes
+search_interval = '1h'
+
+[item.rennvelo]
+marketplace = 'tutti'
+search_phrases = 'rennvelo'
+min_price = 100
+max_price = '600 CHF'
 ```
 
 **AI-powered filtering:**

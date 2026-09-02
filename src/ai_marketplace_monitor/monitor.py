@@ -465,6 +465,11 @@ class MarketplaceMonitor:
         for mp in self.config.marketplace.values():
             if getattr(mp, "enabled", True) is False:
                 continue
+            marketplace_class = supported_marketplaces.get(mp.market_type or mp.name)
+            # marketplaces that can be browsed anonymously (e.g. tutti) never
+            # gain credentials, so waiting for them would block forever.
+            if marketplace_class is not None and not marketplace_class.requires_login:
+                continue
             if not getattr(mp, "username", None) or not getattr(mp, "password", None):
                 return False
         return True
