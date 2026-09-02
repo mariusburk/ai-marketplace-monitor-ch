@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Type
 from ..config import supported_ai_backends, supported_marketplaces
 from ..notification import NotificationConfig
 from ..user import UserConfig
+from ..utils import MonitorConfig
 from .config_api import ConfigFileService, scan_sections
 from .schema import INTERNAL_FIELDS, describe_dataclass
 from .secrets_redact import MASK
@@ -28,6 +29,10 @@ from .secrets_redact import MASK
 # editor: they are rare and both are lists of lists. `monitor` is here because
 # the display currency and the fixer.io key belong in a settings form.
 EDITABLE_KINDS = ("marketplace", "item", "user", "notification", "ai", "monitor")
+
+# Sections that exist once and carry no name of their own: `[monitor]`, not
+# `[monitor.something]`. Their kind doubles as their name.
+SINGLETON_KINDS = ("monitor",)
 
 # A name has to survive being written as [kind.name], so no dots or brackets.
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -72,6 +77,8 @@ def config_class(kind: str, variant: str | None) -> Type[Any]:
         return UserConfig
     if kind == "notification":
         return NotificationConfig
+    if kind == "monitor":
+        return MonitorConfig
     raise SectionError(f"Unbekannte Art: {kind}")
 
 
@@ -157,7 +164,8 @@ def to_toml(value: Any) -> str:
 
 def render_section(kind: str, name: str, values: Dict[str, Any]) -> str:
     """Render a whole section, including its header, as TOML lines."""
-    lines = [f"[{kind}.{name}]"]
+    header = kind if kind in SINGLETON_KINDS else f"{kind}.{name}"
+    lines = [f"[{header}]"]
     for key, value in values.items():
         if key in INTERNAL_FIELDS or value in (None, "", []):
             continue
@@ -179,12 +187,15 @@ class SectionService:
         for info in self._files.list_files():
             content, _ = self._files.read(info.id)
             for section in scan_sections(content):
-                if section.prefix not in EDITABLE_KINDS or not section.suffix:
+                if section.prefix not in EDITABLE_KINDS:
+                    continue
+                singleton = section.prefix in SINGLETON_KINDS
+                if not section.suffix and not singleton:
                     continue
                 listed.append(
                     {
                         "kind": section.prefix,
-                        "name": section.suffix,
+                        "name": section.suffix or section.prefix,
                         "variant": self._variant(section.prefix, section.suffix, section.fields),
                         "values": self._mask(section.fields),
                         "editable": info.id == self._files.list_files()[-1].id,
@@ -237,7 +248,7 @@ class SectionService:
         """Create or replace one section. Returns field errors, empty on success."""
         if kind not in EDITABLE_KINDS:
             raise SectionError(f"Abschnitt {kind} kann hier nicht bearbeitet werden.")
-        name = validate_name(name)
+        name = kind if kind in SINGLETON_KINDS else validate_name(name)
 
         file_id = self._files.list_files()[-1].id
         content, mtime = self._files.read(file_id)
@@ -295,7 +306,9 @@ class SectionService:
     @staticmethod
     def _find(content: str, kind: str, name: str) -> Any:
         for section in scan_sections(content):
-            if section.prefix == kind and section.suffix == name:
+            if section.prefix != kind:
+                continue
+            if section.suffix == name or (kind in SINGLETON_KINDS and not section.suffix):
                 return section
         return None
 

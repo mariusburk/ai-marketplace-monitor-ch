@@ -1,110 +1,235 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Marketplace Monitor</title>
+  <title>Fundstück</title>
+  <link rel="stylesheet" href="/static/fonts.css" />
   <link rel="stylesheet" href="/static/vendor/codemirror.css" />
   <link rel="stylesheet" href="/static/vendor/dialog.css" />
   <link rel="stylesheet" href="/static/app.css" />
   <link rel="icon" href="data:," />
 </head>
 <body>
+
+  <!-- First run: no account exists yet, only the setup flow answers. -->
+  <div id="setup-screen" class="login-screen hidden">
+    <form id="setup-form" class="setup-card" autocomplete="off">
+      <h1>Fund<span>stück</span></h1>
+      <p class="subtitle">Dieser Server hat noch kein Konto. Lege es jetzt an.</p>
+      <div class="setup-steps"><span class="done"></span><span></span></div>
+      <p class="hint-box">
+        Das Setup-Token steht im Log des Containers:<br />
+        <code>docker compose logs aimm</code>
+      </p>
+      <div class="field">
+        <label for="setup-token">Setup-Token</label>
+        <input id="setup-token" name="token" required autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="setup-user">Benutzername</label>
+        <input id="setup-user" name="username" required autocomplete="username" />
+      </div>
+      <div class="field">
+        <label for="setup-pass">Passwort</label>
+        <input id="setup-pass" name="password" type="password" required
+               autocomplete="new-password" minlength="8" />
+        <p class="field-note">Mindestens 8 Zeichen.</p>
+      </div>
+      <button type="submit" class="primary">Konto anlegen</button>
+      <p id="setup-error" class="error" hidden></p>
+    </form>
+  </div>
+
   <div id="login-screen" class="login-screen hidden">
     <form id="login-form" class="login-form">
-      <h1 id="login-title">AI Marketplace Monitor</h1>
+      <h1 id="login-title">Fund<span>stück</span></h1>
       <p id="login-subtitle" class="subtitle" hidden></p>
-      <label>Username
+      <label>Benutzername
         <input type="text" name="username" autocomplete="username" required />
       </label>
-      <label>Password
-        <input type="password" name="password" autocomplete="current-password" required autofocus />
+      <label>Passwort
+        <input type="password" name="password" autocomplete="current-password" required />
       </label>
-      <button type="submit" id="login-submit">Sign in</button>
+      <button type="submit" id="login-submit" class="primary">Anmelden</button>
       <p id="login-error" class="error" hidden></p>
     </form>
   </div>
 
   <div id="app" class="app hidden">
-    <header class="header">
-      <div class="header-left">
-        <span class="brand">AI Marketplace Monitor</span>
-        <span id="config-name" class="config-name">—</span>
-      </div>
-      <div class="header-right">
-        <span id="monitor-status" class="status-chip status-warn" title="Last activity from the monitor">● monitor: idle</span>
-        <button id="restart-btn" class="ghost small" title="Wake up and search all items now" aria-label="Wake up and search all items now">▶</button>
-        <a id="browser-btn" class="ghost" href="/vnc/vnc.html?path=ws/vnc&autoconnect=1&resize=scale" target="_blank" rel="noopener" title="Open the live Chromium view (CAPTCHA / login)" hidden>Browser</a>
-        <button id="export-csv-btn" class="ghost small" title="Download all found items as CSV" aria-label="Download all found items as CSV">⬇ Export CSV</button>
-        <button id="logout-btn" class="ghost">Logout</button>
-      </div>
+
+    <header class="topbar">
+      <span class="mark">Fund<span>stück</span></span>
+      <span id="monitor-status" class="status-chip" title="Letzte Aktivität des Monitors">wacht</span>
+      <button id="restart-btn" class="ghost small" title="Jetzt alle Jagden durchsuchen">Jetzt suchen</button>
+      <span class="spacer"></span>
+      <span id="config-name" class="config-name">—</span>
+      <a id="browser-btn" class="ghost small"
+         href="/vnc/vnc.html?path=ws/vnc&autoconnect=1&resize=scale" target="_blank"
+         rel="noopener" title="Live-Ansicht des Browsers (CAPTCHA / Login)" hidden>Browser</a>
+      <button id="export-csv-btn" class="ghost small" title="Alle Funde als CSV laden">CSV</button>
+      <button id="logout-btn" class="ghost small">Abmelden</button>
     </header>
 
-    <main class="main">
-      <section class="editor-pane">
-        <div class="editor-toolbar">
-          <div class="add-dropdown" id="add-dropdown">
-            <button id="add-btn" class="toolbar-btn">+ Add section ▾</button>
-            <div id="add-menu" class="add-menu hidden">
-              <button data-prefix="item">Item to watch</button>
-              <button data-prefix="user">User / notification</button>
-              <button data-prefix="ai">AI backend</button>
-              <button data-prefix="marketplace">Marketplace</button>
-            </div>
-          </div>
-          <div class="toolbar-spacer"></div>
-          <button id="save-btn" class="toolbar-btn save-btn" disabled>Save</button>
-        </div>
-        <div class="editor-with-gutter">
-          <div id="gutter" class="gutter"><div id="gutter-inner" class="gutter-inner"></div></div>
-          <div id="editor-host"></div>
-        </div>
-        <div id="editor-status" class="editor-status"></div>
-      </section>
+    <nav class="nav" id="nav">
+      <button data-view="finds" aria-current="true">Funde</button>
+      <button data-view="hunts">Jagden</button>
+      <button data-view="connections">Verbindungen</button>
+      <button data-view="settings">Einstellungen</button>
+    </nav>
 
-      <section class="logs-pane">
-        <div class="logs-toolbar">
-          <div class="level-chips">
-            <button data-level="ALL" class="chip active">All</button>
-            <button data-level="INFO" class="chip">Info</button>
-            <button data-level="WARNING" class="chip">Warn</button>
-            <button data-level="ERROR" class="chip">Error</button>
-          </div>
-          <div class="kind-chips">
-            <button data-kind="" class="chip active">Any</button>
-            <button data-kind="ai_eval" class="chip">AI eval</button>
-            <button data-kind="search_summary" class="chip">Searches</button>
-            <button data-kind="listing_skip" class="chip">Skipped</button>
-            <button data-kind="credentials_wait" class="chip">Login</button>
-          </div>
-          <select id="item-filter" title="Filter by item"><option value="">Any item</option></select>
-          <select id="score-filter" title="Minimum score">
-            <option value="">Any score</option>
-            <option value="3">≥ 3</option>
-            <option value="4">≥ 4</option>
-            <option value="5">= 5 (high)</option>
-          </select>
-          <input id="log-filter" type="search" placeholder="Text filter…" />
-          <label class="autoscroll">
-            <input id="autoscroll" type="checkbox" checked /> auto-scroll
-          </label>
+    <!-- ---------- Funde ---------- -->
+    <section class="view active view-wide" id="view-finds">
+      <div class="stage">
+        <nav class="rail" aria-label="Jagden">
+          <h3>Jagden</h3>
+          <div id="hunt-rail"></div>
+          <button class="hunt" id="rail-new" type="button">
+            <span class="name" style="color:var(--ink-200)">+ Neue Jagd</span>
+          </button>
+        </nav>
+        <div>
+          <h2 class="section-head">Funde</h2>
+          <div class="feed" id="feed"></div>
         </div>
-        <div id="logs" class="logs"></div>
-      </section>
-    </main>
+      </div>
+    </section>
+
+    <!-- ---------- Jagden ---------- -->
+    <section class="view view-wide" id="view-hunts">
+      <div class="panel">
+        <h3>Jagden</h3>
+        <p class="panel-note">
+          Eine Jagd beschreibt, wonach gesucht wird und wo. Sie kann mehrere Marktplätze
+          gleichzeitig beobachten; die Preis-Vergleichsbasis wird über alle gepoolt.
+        </p>
+        <div id="hunt-list"></div>
+        <div class="row">
+          <button class="primary" id="hunt-new">Neue Jagd</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- Verbindungen ---------- -->
+    <section class="view view-wide" id="view-connections">
+      <div class="panel">
+        <h3>Marktplätze</h3>
+        <p class="panel-note">
+          Abgeschaltete Marktplätze werden nicht mehr durchsucht, ihre Jagden bleiben erhalten.
+        </p>
+        <div id="marketplace-list"></div>
+      </div>
+      <div class="panel">
+        <h3>Benachrichtigungen</h3>
+        <p class="panel-note">Der Test schickt eine echte Nachricht — kein Trockenlauf.</p>
+        <div id="user-list"></div>
+      </div>
+      <div class="panel">
+        <h3>KI-Bewertung</h3>
+        <p class="panel-note">
+          Der Test prüft Erreichbarkeit und ob sich die Bewertung lesen lässt.
+        </p>
+        <div id="ai-list"></div>
+      </div>
+    </section>
+
+    <!-- ---------- Einstellungen ---------- -->
+    <section class="view view-wide" id="view-settings">
+      <div class="panel">
+        <h3>Anzeige und Wechselkurse</h3>
+        <p class="panel-note">
+          Preise anderer Währungen werden umgerechnet; der Originalpreis bleibt daneben stehen.
+          Ohne Schlüssel kommen die Kurse von Frankfurter (EZB, ohne Anmeldung).
+        </p>
+        <div id="monitor-settings" class="row" style="display:block"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Wartung</h3>
+        <p class="panel-note">
+          Der Zwischenspeicher merkt sich, was schon gemeldet wurde. Leeren heisst:
+          der nächste Lauf meldet alles noch einmal.
+        </p>
+        <div class="row">
+          <div class="who">
+            <b>Zwischenspeicher leeren</b>
+            <span>Inserate, KI-Antworten und Benachrichtigungen</span>
+          </div>
+          <button class="ghost danger" id="cache-clear">Leeren</button>
+          <p class="result" id="cache-result" hidden></p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Konfigurationsdatei</h3>
+        <p class="panel-note">
+          Für alles, wofür es kein Formular gibt — Regionen, Übersetzungen, Feinheiten.
+          Änderungen greifen ohne Neustart.
+        </p>
+        <div class="row" style="display:block">
+          <div class="editor-pane">
+            <div class="editor-toolbar">
+              <div class="add-dropdown" id="add-dropdown" hidden>
+                <button id="add-btn" class="toolbar-btn">+ Abschnitt ▾</button>
+                <div id="add-menu" class="add-menu hidden">
+                  <button data-prefix="item">Jagd</button>
+                  <button data-prefix="user">Benutzer / Benachrichtigung</button>
+                  <button data-prefix="ai">KI-Dienst</button>
+                  <button data-prefix="marketplace">Marktplatz</button>
+                </div>
+              </div>
+              <span class="spacer" style="flex:1"></span>
+              <button id="save-btn" class="toolbar-btn primary" disabled>Speichern</button>
+            </div>
+            <div class="editor-wrap">
+              <div id="gutter" class="gutter"><div id="gutter-inner" class="gutter-inner"></div></div>
+              <div id="editor-host"></div>
+            </div>
+            <div id="editor-status" class="editor-status"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- Protokoll ---------- -->
+    <div class="drawer" id="drawer">
+      <div class="drawer-head">
+        <button class="drawer-toggle" id="drawer-toggle" aria-expanded="false">▸ Protokoll</button>
+        <div class="drawer-filters">
+          <button data-level="ALL" class="chip active">Alle</button>
+          <button data-level="INFO" class="chip">Info</button>
+          <button data-level="WARNING" class="chip">Warnung</button>
+          <button data-level="ERROR" class="chip">Fehler</button>
+          <button data-kind="" class="chip active">Beliebig</button>
+          <button data-kind="ai_eval" class="chip">KI</button>
+          <button data-kind="search_summary" class="chip">Suchen</button>
+          <button data-kind="listing_skip" class="chip">Übersprungen</button>
+          <select id="item-filter" title="Nach Jagd filtern"><option value="">Jede Jagd</option></select>
+          <select id="score-filter" title="Mindestnote">
+            <option value="">Jede Note</option>
+            <option value="3">ab 3</option>
+            <option value="4">ab 4</option>
+            <option value="5">nur 5</option>
+          </select>
+          <input id="log-filter" type="search" placeholder="Text…" />
+          <label><input id="autoscroll" type="checkbox" checked /> mitlaufen</label>
+        </div>
+      </div>
+      <div id="logs" class="logs"></div>
+    </div>
 
     <footer class="footer">
-      <span id="ws-status">● connecting…</span>
+      <span id="ws-status">● verbinde…</span>
       <span id="mtime"></span>
     </footer>
   </div>
 
-  <!-- Section form modal -->
+  <!-- Section form modal, shared by the hunt/marketplace/user forms and the editor -->
   <div id="form-modal" class="modal hidden">
     <div class="modal-backdrop"></div>
-    <div class="modal-card form-modal-card">
+    <div class="modal-card">
       <div class="modal-header">
-        <h2 id="form-modal-title">Edit section</h2>
+        <h2 id="form-modal-title">Abschnitt bearbeiten</h2>
         <button class="modal-close" id="form-modal-close">×</button>
       </div>
       <div class="modal-body">
@@ -113,16 +238,16 @@
         <div id="form-error" class="error" hidden></div>
       </div>
       <div class="modal-footer">
-        <button type="button" id="form-cancel" class="ghost">Cancel</button>
-        <button type="button" id="form-save" class="primary">Save</button>
+        <button type="button" id="form-cancel" class="ghost">Abbrechen</button>
+        <button type="button" id="form-save" class="primary">Speichern</button>
       </div>
     </div>
   </div>
 
   <!--
-    Load the vendored toml-edit-js (Rust→WASM port of toml_edit).
-    Initializes once and exposes parse/edit/stringify on window.tomlEdit
-    so the classic app.js script can call it after init resolves.
+    Vendored toml-edit-js (Rust→WASM port of toml_edit). Initializes once and
+    exposes parse/edit/stringify on window.tomlEdit so the classic app.js can
+    call it after init resolves.
   -->
   <script type="module">
     import init, { parse, edit, stringify } from "/static/vendor/toml-edit-js/shims.js";
@@ -140,5 +265,6 @@
   </script>
   <script src="/static/vendor/codemirror.js"></script>
   <script src="/static/app.js"></script>
+  <script src="/static/ui.js"></script>
 </body>
 </html>

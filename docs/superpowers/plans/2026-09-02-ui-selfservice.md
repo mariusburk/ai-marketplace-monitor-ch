@@ -255,19 +255,36 @@ Each phase is independently shippable and leaves the app working.
       fresh notification arrives tagged with its hunt while older entries keep
       their blank name rather than being rewritten.
 
-### Phase 5 — The interface
+### Phase 5 — The interface *(done)*
 
-Per the design spec. Vanilla JS, matching the existing stack — no framework.
+Vanilla JS, matching the existing stack. `app.js` keeps the config editor, the
+log stream and the login POST; a new `ui.js` owns everything else. They share
+the DOM ids `app.js` already looked for, so neither had to be rewritten.
 
-- [ ] Tokens, vendored fonts, base layout (rail + feed + log drawer).
-- [ ] Find card with the **price ruler**.
-- [ ] Hunt form generated from `/api/schema`, with the marketplace checkboxes
-      driving which per-marketplace fields appear.
-- [ ] Connections screen with inline Test buttons.
-- [ ] Setup wizard: token → admin → marketplace → first hunt.
-- [ ] Expert TOML editor retained behind Settings.
-- [ ] States: loading, empty, error on every list. Responsive to 390px.
-- [ ] Verify in a real browser at desktop and mobile widths before presenting.
+- [x] Tokens per the design spec, and the two typefaces **vendored** as woff2
+      (356 KB) — the container must render identically with no internet, and a
+      paid product should not leak its viewers to a font CDN.
+- [x] Shell: status strip, four views, hunts rail beside the feed, log drawer
+      collapsed at the bottom. The logs went from half the screen to a drawer:
+      the old split encoded a developer's priorities, not a user's.
+- [x] Find card with the **price ruler**, drawn from `price_basis` rather than
+      by parsing the sentence, and naming its composition.
+- [x] Hunt form built from `/api/schema`, with marketplace checkboxes that
+      re-derive the fields: a hunt on several marketplaces is offered the
+      **intersection** of their options, so an impossible combination cannot be
+      submitted in the first place.
+- [x] Connections view: marketplace switches, and inline test buttons whose
+      result stays on screen rather than in a toast that disappears unread.
+- [x] Setup screen for a fresh instance, naming the exact command that shows
+      the token.
+- [x] Expert TOML editor kept behind Einstellungen. Its own English section
+      forms are now unreachable — the schema-driven German ones replaced them —
+      so the "+ Abschnitt" menu is hidden rather than left as a second path.
+- [x] States: skeletons while loading, an empty state that says what happens
+      next, an error state that names the failure.
+- [x] Verified in a real browser against the running container at 1400px and
+      390px, in both themes: no horizontal overflow either width, no JS errors,
+      and the ruler drawn from real data.
 
 ### Phase 6 — Docs
 

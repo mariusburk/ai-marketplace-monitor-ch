@@ -104,8 +104,8 @@
     try {
       const res = await fetch("/api/login", { method: "POST", body, credentials: "same-origin" });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Login failed" }));
-        $("#login-error").textContent = err.detail || "Login failed";
+        const err = await res.json().catch(() => ({ detail: "Anmeldung fehlgeschlagen" }));
+        $("#login-error").textContent = err.detail || "Anmeldung fehlgeschlagen";
         $("#login-error").hidden = false;
         return;
       }
@@ -492,21 +492,21 @@
     if (!chip) return;
     if (!state.wsConnected) {
       chip.className = "status-chip status-err";
-      chip.textContent = "● monitor: disconnected";
-      chip.title = "The aimm process may have stopped. Reconnecting…";
+      chip.textContent = "● Monitor: keine Verbindung";
+      chip.title = "Der Monitor-Prozess antwortet nicht. Neuer Versuch läuft.";
     } else if (!state.lastActivity) {
       chip.className = "status-chip status-warn";
-      chip.textContent = "● monitor: connected";
+      chip.textContent = "● Monitor: verbunden";
       chip.title = "Connected, waiting for first log message.";
     } else {
       const ago = Math.round(Date.now() / 1000 - state.lastActivity);
       if (ago > 300) {
         chip.className = "status-chip status-warn";
-        chip.textContent = `● monitor: idle · ${formatAgo(state.lastActivity)}`;
+        chip.textContent = `● Monitor: wartet · ${formatAgo(state.lastActivity)}`;
         chip.title = "Connected but no activity for 5+ minutes.";
       } else {
         chip.className = "status-chip status-ok";
-        chip.textContent = `● monitor: running · ${formatAgo(state.lastActivity)}`;
+        chip.textContent = `● Monitor: wacht · ${formatAgo(state.lastActivity)}`;
         chip.title = "Process is alive and active.";
       }
     }
@@ -1651,7 +1651,7 @@
     state.ws = ws;
     ws.onopen = () => {
       state.wsConnected = true;
-      $("#ws-status").textContent = "● streaming";
+      $("#ws-status").textContent = "● verbunden";
       renderMonitorStatus();
     };
     ws.onmessage = (ev) => {
@@ -1667,7 +1667,7 @@
     };
     ws.onclose = () => {
       state.wsConnected = false;
-      $("#ws-status").textContent = "● disconnected — retrying…";
+      $("#ws-status").textContent = "● getrennt — neuer Versuch …";
       renderMonitorStatus();
       setTimeout(connectWs, 2000);
     };
