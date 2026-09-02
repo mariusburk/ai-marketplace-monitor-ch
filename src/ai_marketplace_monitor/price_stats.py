@@ -64,6 +64,16 @@ class PriceStats:
         return round(dearer * 100 / len(prices))
 
 
+def format_amount(currency: str, value: int) -> str:
+    """Render an amount the way its currency is normally written.
+
+    A code is separated from the number ("CHF 300"), a symbol is not ("$300").
+    """
+    if currency and currency[-1].isalpha():
+        return f"{currency} {value}"
+    return f"{currency}{value}"
+
+
 def describe_price(price: int | None, stats: "PriceStats | None", currency: str) -> str:
     """One line putting a price in context, or "" when there is nothing to say.
 
@@ -83,7 +93,8 @@ def describe_price(price: int | None, stats: "PriceStats | None", currency: str)
         position = "about level with"
 
     return (
-        f"{currency} {price} is {position} the median {currency} {stats.median} "
+        f"{format_amount(currency, price)} is {position} "
+        f"the median {format_amount(currency, stats.median)} "
         f"of {stats.count} comparable listings "
-        f"(range {currency} {stats.minimum}-{stats.maximum})"
+        f"(range {format_amount(currency, stats.minimum)}-{stats.maximum})"
     )

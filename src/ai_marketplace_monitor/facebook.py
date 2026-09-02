@@ -16,6 +16,7 @@ from rich.pretty import pretty_repr
 
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
+from .price_stats import PriceStats, describe_price
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -282,6 +283,45 @@ class FacebookItemConfig(ItemConfig, FacebookMarketItemCommonConfig):
     pass
 
 
+# Amount at the start of a rendered facebook price such as "$1,234" or
+# "€6,695". `extract_price` may join a discounted price as "$90 | $120";
+# only the first, current one is of interest.
+FACEBOOK_PRICE_RE = re.compile(r"(\d[\d,.]*)")
+
+# Query parameters that clip the result set to the configured price bounds.
+PRICE_PARAMS = ("minPrice=", "maxPrice=")
+
+
+def parse_price(price: str | None) -> int | None:
+    """Numeric value of a rendered facebook price, or None if there is none."""
+    if not price:
+        return None
+    matched = FACEBOOK_PRICE_RE.search(price.split("|")[0])
+    if matched is None:
+        return None
+    digits = matched.group(1).replace(",", "").split(".")[0]
+    return int(digits) if digits.isdigit() else None
+
+
+def price_symbol(price: str | None) -> str:
+    """Currency prefix of a rendered price, e.g. "$" or "€"."""
+    if not price:
+        return ""
+    matched = re.match(r"(\D*)\d", price.strip())
+    return matched.group(1).strip() if matched else ""
+
+
+def without_price_params(url: str) -> str:
+    """Drop the price bounds from a search url.
+
+    facebook filters by price server side, so the reference distribution has to
+    be fetched with those parameters removed.
+    """
+    head, _, query = url.partition("?")
+    kept = [p for p in query.split("&") if p and not p.startswith(PRICE_PARAMS)]
+    return f"{head}?{'&'.join(kept)}" if kept else head
+
+
 class FacebookMarketplace(Marketplace):
     initial_url = "https://www.facebook.com/login/device-based/regular/login/"
 
@@ -512,20 +552,32 @@ class FacebookMarketplace(Marketplace):
                         + (f" with radius={radius}" if radius else " with default radius")
                     )
 
-                self.goto_url(
-                    marketplace_url + "&".join([f"query={quote(search_phrase)}", *options])
+                search_url = marketplace_url + "&".join(
+                    [f"query={quote(search_phrase)}", *options]
                 )
+                self.goto_url(search_url)
 
                 found_listings = FacebookSearchResultPage(
                     self.page, self.translator, self.logger
                 ).get_listings()
                 time.sleep(5)
-                if self.logger:
-                    self.logger.error(
-                        f"""{hilight("[Search]", "fail")} Failed to get search results for {search_phrase} from {city}"""
+                if not found_listings and self.logger:
+                    self.logger.info(
+                        f"""{hilight("[Search]", "dim")} No search results for {search_phrase} from {cname or city}"""
                     )
 
                 counter.increment(CounterItem.SEARCH_PERFORMED, item_config.name)
+
+                stats = self.price_reference(
+                    search_url, found_listings, item_config, max_price, min_price
+                )
+                currency_label = currency or price_symbol(
+                    found_listings[0].price if found_listings else ""
+                )
+                for listing in found_listings:
+                    listing.price_comparison = describe_price(
+                        parse_price(listing.price), stats, currency_label
+                    )
 
                 # go to each item and get the description
                 # if we have not done that before
@@ -583,6 +635,72 @@ class FacebookMarketplace(Marketplace):
                         yield listing
                     else:
                         counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
+
+    def reference_prices(
+        self: "FacebookMarketplace", listings: List[Listing], item_config: FacebookItemConfig
+    ) -> List[int | None]:
+        """Prices to compare against, drawn from the same search.
+
+        Only the keyword filters are applied, so a Hero 13 is measured against
+        other Hero 13 offers rather than against every camera on the site.
+        """
+        keywords = item_config.keywords
+        antikeywords = item_config.antikeywords
+        prices: List[int | None] = []
+        for listing in listings:
+            haystack = f"{listing.title}  {listing.description}"
+            if antikeywords and is_substring(antikeywords, haystack):
+                continue
+            if keywords and not is_substring(keywords, haystack):
+                continue
+            prices.append(parse_price(listing.price))
+        return prices
+
+    def price_reference(
+        self: "FacebookMarketplace",
+        search_url: str,
+        found_listings: List[Listing],
+        item_config: FacebookItemConfig,
+        max_price: str | None,
+        min_price: str | None,
+    ) -> PriceStats | None:
+        """Distribution to judge a price against.
+
+        facebook filters by price server side, so when bounds are configured the
+        results in hand are already clipped and say nothing about the wider
+        market. Only then is a second, unfiltered search worth its request —
+        without bounds the listings already cover the full range.
+        """
+        if not max_price and not min_price:
+            return PriceStats.from_prices(self.reference_prices(found_listings, item_config))
+
+        reference_url = without_price_params(search_url)
+        if reference_url == search_url:
+            return PriceStats.from_prices(self.reference_prices(found_listings, item_config))
+
+        try:
+            self.goto_url(reference_url)
+            assert self.page is not None
+            unfiltered = FacebookSearchResultPage(
+                self.page, self.translator, self.logger
+            ).get_listings()
+            time.sleep(5)
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            if self.logger:
+                self.logger.debug(
+                    f"""{hilight("[Search]", "fail")} Could not read price reference: {e}"""
+                )
+            return None
+
+        stats = PriceStats.from_prices(self.reference_prices(unfiltered, item_config))
+        if stats is not None and self.logger:
+            self.logger.debug(
+                f"""{hilight("[Search]", "info")} Price reference: median {stats.median} """
+                f"""of {stats.count} listings"""
+            )
+        return stats
 
     def get_listing_details(
         self: "FacebookMarketplace",
