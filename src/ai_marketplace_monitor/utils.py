@@ -77,6 +77,9 @@ class CacheType(Enum):
     AI_INQUIRY = "ai-inquiries"
     USER_NOTIFIED = "user-notifications"
     COUNTERS = "counters"
+    # Prices a hunt has seen, pooled across marketplaces. Outlives the search
+    # that recorded them so a tutti run can use what facebook saw earlier.
+    PRICE_OBSERVATION = "price-observations"
 
 
 class CounterItem(Enum):

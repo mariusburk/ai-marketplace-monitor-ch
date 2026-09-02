@@ -13,7 +13,7 @@ Hero 13 offers rather than against every camera on the site.
 
 from dataclasses import dataclass
 from statistics import median
-from typing import Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence
 
 # A handful of offers says very little about a market price, so no comparison
 # is reported below this many reference prices.
@@ -74,7 +74,24 @@ def format_amount(currency: str, value: int) -> str:
     return f"{currency}{value}"
 
 
-def describe_price(price: int | None, stats: "PriceStats | None", currency: str) -> str:
+def describe_composition(composition: Dict[str, int] | None) -> str:
+    """Render which marketplaces a reference was built from, e.g. "21 tutti, 9 facebook".
+
+    Pooling would otherwise hide that two sites price the same goods
+    differently; a median is easier to trust when its basis is visible.
+    """
+    if not composition or len(composition) < 2:
+        return ""
+    parts = [f"{count} {name}" for name, count in sorted(composition.items())]
+    return " (" + ", ".join(parts) + ")"
+
+
+def describe_price(
+    price: int | None,
+    stats: "PriceStats | None",
+    currency: str,
+    composition: Dict[str, int] | None = None,
+) -> str:
     """One line putting a price in context, or "" when there is nothing to say.
 
     The wording is deliberately factual rather than a verdict — it feeds both a
@@ -95,6 +112,6 @@ def describe_price(price: int | None, stats: "PriceStats | None", currency: str)
     return (
         f"{format_amount(currency, price)} is {position} "
         f"the median {format_amount(currency, stats.median)} "
-        f"of {stats.count} comparable listings "
+        f"of {stats.count} comparable listings{describe_composition(composition)} "
         f"(range {format_amount(currency, stats.minimum)}-{stats.maximum})"
     )

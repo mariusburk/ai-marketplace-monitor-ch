@@ -16,7 +16,8 @@ from rich.pretty import pretty_repr
 
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
-from .price_stats import PriceStats, describe_price
+from .price_index import PriceObservation, record, reference
+from .price_stats import describe_price
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -290,6 +291,10 @@ FACEBOOK_PRICE_RE = re.compile(r"(\d[\d,.]*)")
 
 # Query parameters that clip the result set to the configured price bounds.
 PRICE_PARAMS = ("minPrice=", "maxPrice=")
+
+# Seconds to wait between page loads, matching the pauses already taken
+# elsewhere in this module.
+REQUEST_INTERVAL = 5
 
 
 def parse_price(price: str | None) -> int | None:
@@ -568,15 +573,16 @@ class FacebookMarketplace(Marketplace):
 
                 counter.increment(CounterItem.SEARCH_PERFORMED, item_config.name)
 
-                stats = self.price_reference(
-                    search_url, found_listings, item_config, max_price, min_price
-                )
                 currency_label = currency or price_symbol(
                     found_listings[0].price if found_listings else ""
                 )
+                self.record_observations(
+                    search_url, found_listings, item_config, currency_label, max_price, min_price
+                )
+                stats, composition = reference(item_config.name, currency_label)
                 for listing in found_listings:
                     listing.price_comparison = describe_price(
-                        parse_price(listing.price), stats, currency_label
+                        parse_price(listing.price), stats, currency_label, composition
                     )
 
                 # go to each item and get the description
@@ -636,71 +642,84 @@ class FacebookMarketplace(Marketplace):
                     else:
                         counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
 
-    def reference_prices(
-        self: "FacebookMarketplace", listings: List[Listing], item_config: FacebookItemConfig
-    ) -> List[int | None]:
-        """Prices to compare against, drawn from the same search.
+    def observations(
+        self: "FacebookMarketplace",
+        listings: List[Listing],
+        item_config: FacebookItemConfig,
+        currency: str,
+    ) -> List[PriceObservation]:
+        """The priced listings this search may contribute to the going rate.
 
         Only the keyword filters are applied, so a Hero 13 is measured against
         other Hero 13 offers rather than against every camera on the site.
         """
         keywords = item_config.keywords
         antikeywords = item_config.antikeywords
-        prices: List[int | None] = []
+        seen_at = time.time()
+        found: List[PriceObservation] = []
         for listing in listings:
             haystack = f"{listing.title}  {listing.description}"
             if antikeywords and is_substring(antikeywords, haystack):
                 continue
             if keywords and not is_substring(keywords, haystack):
                 continue
-            prices.append(parse_price(listing.price))
-        return prices
+            amount = parse_price(listing.price)
+            if amount is None or amount <= 0:
+                continue
+            found.append(
+                PriceObservation(
+                    marketplace=self.name,
+                    listing_id=listing.id,
+                    amount=amount,
+                    currency=currency,
+                    seen_at=seen_at,
+                )
+            )
+        return found
 
-    def price_reference(
+    def record_observations(
         self: "FacebookMarketplace",
         search_url: str,
         found_listings: List[Listing],
         item_config: FacebookItemConfig,
+        currency: str,
         max_price: str | None,
         min_price: str | None,
-    ) -> PriceStats | None:
-        """Distribution to judge a price against.
+    ) -> int:
+        """Contribute this search's prices to the hunt's going rate.
 
         facebook filters by price server side, so when bounds are configured the
-        results in hand are already clipped and say nothing about the wider
-        market. Only then is a second, unfiltered search worth its request —
+        results in hand are already clipped and would bias the reference towards
+        the bounds. Only then is a second, unfiltered search worth its request —
         without bounds the listings already cover the full range.
         """
-        if not max_price and not min_price:
-            return PriceStats.from_prices(self.reference_prices(found_listings, item_config))
+        listings = found_listings
+        if max_price or min_price:
+            reference_url = without_price_params(search_url)
+            if reference_url != search_url:
+                try:
+                    self.goto_url(reference_url)
+                    assert self.page is not None
+                    listings = FacebookSearchResultPage(
+                        self.page, self.translator, self.logger
+                    ).get_listings()
+                    time.sleep(REQUEST_INTERVAL)
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    if self.logger:
+                        self.logger.debug(
+                            f"""{hilight("[Search]", "fail")} Could not read price reference: {e}"""
+                        )
+                    return 0
 
-        reference_url = without_price_params(search_url)
-        if reference_url == search_url:
-            return PriceStats.from_prices(self.reference_prices(found_listings, item_config))
-
-        try:
-            self.goto_url(reference_url)
-            assert self.page is not None
-            unfiltered = FacebookSearchResultPage(
-                self.page, self.translator, self.logger
-            ).get_listings()
-            time.sleep(5)
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            if self.logger:
-                self.logger.debug(
-                    f"""{hilight("[Search]", "fail")} Could not read price reference: {e}"""
-                )
-            return None
-
-        stats = PriceStats.from_prices(self.reference_prices(unfiltered, item_config))
-        if stats is not None and self.logger:
+        held = record(item_config.name, self.observations(listings, item_config, currency))
+        if self.logger:
             self.logger.debug(
-                f"""{hilight("[Search]", "info")} Price reference: median {stats.median} """
-                f"""of {stats.count} listings"""
+                f"""{hilight("[Search]", "info")} Price index for {hilight(item_config.name)}: """
+                f"""{held} observations held"""
             )
-        return stats
+        return held
 
     def get_listing_details(
         self: "FacebookMarketplace",

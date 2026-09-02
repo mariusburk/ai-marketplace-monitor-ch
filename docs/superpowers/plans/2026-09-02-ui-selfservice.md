@@ -199,44 +199,34 @@ Each phase is independently shippable and leaves the app working.
       `marketplace = ["tutti", "facebook"]`, and the monitor schedules it
       twice — every 30 minutes on facebook, hourly on tutti.
 
-### Phase 3.6 — One price reference across all marketplaces
+### Phase 3.6 — One price reference across all marketplaces *(done)*
 
-**Client decision, and it supersedes what is on `main`.** Commits `1cc3293` and
-`6ddacec` build the reference set *inside* each marketplace's `search()`, from
-that one search's own results — so a hunt running on tutti and facebook gets two
-separate medians. The reference becomes **global per hunt** instead: what a GoPro
-is worth does not depend on which site it is listed on, and merging roughly
-doubles the sample, which matters when a page holds 30 listings and the
-`MIN_REFERENCE_PRICES` floor is 4.
-
-The computation therefore has to move out of the marketplace classes, because a
-tutti run must be able to use prices facebook observed twenty minutes earlier.
-
-- [ ] `price_index.py` — a price observation store on the existing `diskcache`.
-      Add `CacheType.PRICE_OBSERVATION`. One record per listing seen:
-      hunt, marketplace, listing id, amount, currency, timestamp.
-- [ ] Each marketplace's search **records** observations for every listing that
-      passed the keyword filters (still ignoring price and canton bounds), and
-      no longer computes statistics itself. `reference_prices()` stays as the
-      keyword-matching helper; `price_reference()` in facebook and the inline
-      block in tutti go away.
-- [ ] `PriceStats` is built from the store, filtered to one hunt and a
-      **freshness window** (default 14 days — long enough to fill the sample,
-      short enough that a second-hand price is still current). Stale records are
-      evicted on write.
-- [ ] **Currency.** Observations keep their own currency; the set is converted to
-      the currency of the listing being judged, via `CurrencyConverter` which is
-      already a dependency. A record whose currency cannot be converted is
-      dropped rather than mixed in — a CHF median polluted by unconverted EUR is
-      worse than a smaller sample.
-- [ ] The readout names its composition — "30 vergleichbare Angebote (21 tutti,
-      9 Facebook)" — so merging does not hide that the two sites price
-      differently. That is the honest version of a global median.
-- [ ] Facebook's extra unfiltered search (only fired when price bounds are set)
-      stays: it is what makes facebook observations unbiased by the bounds.
-- [ ] Tests: observations from two marketplaces merge into one median; the
-      freshness window evicts; an unconvertible currency is dropped, not mixed;
-      below the floor still yields no comparison; composition counts are right.
+- [x] `price_index.py` on the existing diskcache, with
+      `CacheType.PRICE_OBSERVATION`. Records are kept **per hunt** rather than
+      one key per listing: a hunt is what gets read back, the monitor is single
+      threaded so read-modify-write is safe, and scanning every key to find one
+      hunt's prices would not be.
+- [x] Both marketplaces now *record* observations and read the going rate back
+      out of the index. `price_reference()` and the inline block are gone;
+      `reference_prices()` became `observations()`, returning typed records
+      that carry their marketplace and currency.
+- [x] Re-seeing a listing overwrites its record instead of counting twice — the
+      same offer in ten consecutive runs must not outweigh its neighbours.
+- [x] 14-day freshness window, pruned on write and filtered on read.
+- [x] Currency: converted to the judged listing's currency, and anything
+      unconvertible is **dropped** rather than mixed in.
+- [x] The readout names its basis — "35 comparable listings (5 facebook, 30
+      tutti)" — and stays silent when only one marketplace contributed.
+- [x] Facebook's second, unfiltered search is kept and now feeds the index, so
+      its observations are not biased towards the configured bounds.
+- [x] **A silent edit failure this caught.** The call site in `tutti.py` never
+      received the `composition` argument — one of the string replacements did
+      not match after formatting and had no assertion on it. Unit tests passed;
+      only the live run showed the missing "(5 facebook, 30 tutti)". Both call
+      sites now have a test pinning them.
+- [x] Tests (26 new) and a live proof: five facebook observations recorded
+      twenty minutes earlier were pooled with thirty fresh tutti ones into one
+      median of CHF 135 from 35 listings.
 
 ### Phase 4 — The finds feed
 

@@ -69,11 +69,16 @@ def test_describe_price_uses_the_symbol_without_a_space() -> None:
     assert describe_price(120, stats, "$").startswith("$120 is ")
 
 
-def _listing(price: str, title: str = "GoPro Hero 13", description: str = "top") -> Listing:
+def _listing(
+    price: str,
+    title: str = "GoPro Hero 13",
+    description: str = "top",
+    listing_id: str = "1",
+) -> Listing:
     return Listing(
         marketplace="facebook",
         name="gopro",
-        id="1",
+        id=listing_id,
         title=title,
         image="i",
         price=price,
@@ -91,7 +96,7 @@ def _marketplace() -> FacebookMarketplace:
     return marketplace
 
 
-def test_reference_prices_apply_keyword_filters() -> None:
+def test_observations_apply_keyword_filters() -> None:
     item_config = FacebookItemConfig(
         name="gopro", search_phrases=["gopro"], keywords="13", antikeywords=["broken"]
     )
@@ -100,22 +105,40 @@ def test_reference_prices_apply_keyword_filters() -> None:
         _listing("$50", title="GoPro Hero 13 broken", description="for parts"),
         _listing("$300", title="GoPro Hero 9"),
     ]
-    assert _marketplace().reference_prices(listings, item_config) == [400]
+
+    found = _marketplace().observations(listings, item_config, "$")
+
+    assert [o.amount for o in found] == [400]
+    assert found[0].marketplace == "facebook"
+    assert found[0].currency == "$"
 
 
 def test_no_extra_request_when_no_price_bounds_are_set() -> None:
     """No bounds means no second search.
 
-    Without bounds the results already span the full price range, so the
-    extra unfiltered request would be wasted.
+    Without bounds the results already span the full price range, so the extra
+    unfiltered request would be wasted — and this marketplace has no page, so
+    attempting one would raise.
     """
     marketplace = _marketplace()
-    item_config = FacebookItemConfig(name="gopro", search_phrases=["gopro"])
-    listings = [_listing(f"${p}") for p in (100, 200, 300, 400)]
+    item_config = FacebookItemConfig(name="gopro_probe", search_phrases=["gopro"])
+    listings = [_listing(f"${p}", listing_id=str(p)) for p in (100, 200, 300, 400)]
 
-    # a real request would raise, since this marketplace has no page
-    stats = marketplace.price_reference(SEARCH_URL, listings, item_config, None, None)
+    held = marketplace.record_observations(SEARCH_URL, listings, item_config, "$", None, None)
 
-    assert stats is not None
-    assert stats.count == 4
-    assert stats.median == 250
+    assert held >= 4
+
+
+def test_the_same_listing_seen_twice_counts_once() -> None:
+    """A listing that reappears in every run must not outweigh its neighbours."""
+    from ai_marketplace_monitor.price_index import reference
+
+    marketplace = _marketplace()
+    item_config = FacebookItemConfig(name="gopro_dedupe", search_phrases=["gopro"])
+    listings = [_listing("$100", listing_id="same")]
+
+    for _ in range(5):
+        marketplace.record_observations(SEARCH_URL, listings, item_config, "$", None, None)
+
+    _, composition = reference("gopro_dedupe", "$")
+    assert composition == {"facebook": 1}

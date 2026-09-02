@@ -13,7 +13,8 @@ from rich.pretty import pretty_repr
 
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
-from .price_stats import PriceStats, describe_price
+from .price_index import PriceObservation, record, reference
+from .price_stats import describe_price
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -387,13 +388,17 @@ class TuttiMarketplace(Marketplace):
                 if len(page_listings) < LISTINGS_PER_PAGE:
                     break
 
-            reference_prices = self.reference_prices(all_listings, item_config)
-            stats = PriceStats.from_prices(reference_prices)
+            # Hand what this run saw to the shared index, then read the going
+            # rate back out of it — so this hunt's facebook observations count
+            # too, even though they were made by a different search.
+            record(item_config.name, self.observations(all_listings, item_config))
+            stats, composition = reference(item_config.name, TUTTI_CURRENCY)
 
             if stats is not None and self.logger:
                 self.logger.debug(
                     f"""{hilight("[Search]", "info")} Price reference for {hilight(search_phrase)}: """
-                    f"""median {TUTTI_CURRENCY} {stats.median} of {stats.count} listings"""
+                    f"""median {TUTTI_CURRENCY} {stats.median} of {stats.count} listings """
+                    f"""across {", ".join(sorted(composition))}"""
                 )
 
             for listing in all_listings:
@@ -405,7 +410,7 @@ class TuttiMarketplace(Marketplace):
                 found[listing.post_url.split("?")[0]] = True
                 listing.name = item_config.name
                 listing.price_comparison = describe_price(
-                    parse_price(listing.price), stats, TUTTI_CURRENCY
+                    parse_price(listing.price), stats, TUTTI_CURRENCY, composition
                 )
 
                 # filter on what the search page already provides; the condition is
@@ -449,10 +454,10 @@ class TuttiMarketplace(Marketplace):
                 else:
                     counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
 
-    def reference_prices(
+    def observations(
         self: "TuttiMarketplace", listings: List[Listing], item_config: TuttiItemConfig
-    ) -> List[int | None]:
-        """Prices to compare a listing against, drawn from the same search.
+    ) -> List[PriceObservation]:
+        """The priced listings this search may contribute to the going rate.
 
         Only the keyword filters are applied, so a Hero 13 is measured against
         other Hero 13 offers. The price bounds are deliberately ignored — they
@@ -462,15 +467,27 @@ class TuttiMarketplace(Marketplace):
         """
         keywords = item_config.keywords
         antikeywords = item_config.antikeywords
-        prices: List[int | None] = []
+        seen_at = time.time()
+        found: List[PriceObservation] = []
         for listing in listings:
             haystack = f"{listing.title}  {listing.description}"
             if antikeywords and is_substring(antikeywords, haystack):
                 continue
             if keywords and not is_substring(keywords, haystack):
                 continue
-            prices.append(parse_price(listing.price))
-        return prices
+            amount = parse_price(listing.price)
+            if amount is None or amount <= 0:
+                continue
+            found.append(
+                PriceObservation(
+                    marketplace=self.name,
+                    listing_id=listing.id,
+                    amount=amount,
+                    currency=TUTTI_CURRENCY,
+                    seen_at=seen_at,
+                )
+            )
+        return found
 
     def get_listing_details(
         self: "TuttiMarketplace",
