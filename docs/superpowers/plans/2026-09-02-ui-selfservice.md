@@ -172,28 +172,32 @@ Each phase is independently shippable and leaves the app working.
       real counters, the AI test returns 4/5 in ~1 s against the Ollama box,
       and a real push arrived on the phone.
 
-### Phase 3.5 — Marketplace selection *(client request)*
+### Phase 3.5 — Marketplace selection *(done)*
 
-Two levels, because they answer different questions.
-
-- [ ] **Global switches** — one per marketplace in Settings, writing `enabled`
-      on the `[marketplace.*]` section. The backend already honours this
-      (`validate_items` and `schedule_jobs` both skip a disabled marketplace),
-      so this is UI only. A disabled marketplace stops being searched while its
-      hunts survive.
-- [ ] **Per-hunt selection** — `marketplace` currently accepts a single name and
-      `Config.get_item_config` binds an item to the first match, which is why
-      watching one thing on two sites needs two duplicated items today. Accept a
-      **list**, and expand one authored hunt into one runtime `ItemConfig` per
-      selected marketplace. Each keeps its own price reference, so a tutti
-      median is never mixed with a facebook one.
-- [ ] Migration: a plain string keeps working and is read as a one-element list.
-- [ ] Tests: string and list both load; an unknown name is a field error; a
-      disabled marketplace is skipped while its hunts remain; expansion produces
-      the right per-marketplace config subclass.
-
-This is the piece that makes the product scale to a third marketplace without
-the UI growing — a new marketplace adds one switch and one checkbox.
+- [x] **Global switches** — `enabled` on a `[marketplace.*]` section. Already
+      honoured by `validate_items` and `schedule_jobs`; now covered by tests
+      that pin the behaviour, so the UI switch in Phase 5 is wiring only. A
+      disabled marketplace stops being searched and keeps its hunts.
+- [x] **Per-hunt selection** — `marketplace` accepts a list. One authored item
+      becomes one runtime config per marketplace, each validated by that
+      marketplace's own class.
+- [x] `.name` stays the authored name so counters, notifications and log lines
+      keep talking about one hunt; only the dict key is suffixed
+      (`gopro@tutti`), and only when there is more than one target. An item on
+      a single marketplace keeps its plain key, so every existing config and
+      test is untouched.
+- [x] `Config.find_item()` / `item_names()` resolve a hunt by its authored
+      name, because that is what a person types for `--check`.
+- [x] An absent `marketplace` still means *the first* marketplace, not all of
+      them — the alternative would silently double the searches of every
+      existing config.
+- [x] A hunt on several marketplaces may only use options all of them accept.
+      `canton` on a tutti+facebook hunt is now a field error naming the
+      marketplace that refused it, rather than a crash mid-search.
+- [x] Tests (16 new) and a live run: an invalid combination is rejected with
+      "Diese Option kennt facebook nicht", a valid one is written as
+      `marketplace = ["tutti", "facebook"]`, and the monitor schedules it
+      twice — every 30 minutes on facebook, hourly on tutti.
 
 ### Phase 3.6 — One price reference across all marketplaces
 

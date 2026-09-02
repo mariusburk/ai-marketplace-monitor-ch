@@ -629,7 +629,7 @@ class MarketplaceMonitor:
             assert self.config is not None
             if for_item not in self.config.item:
                 raise ValueError(
-                    f"Item {for_item} not found in config, available items are {', '.join(self.config.item.keys())}."
+                    f"Item {for_item} not found in config, available items are {', '.join(self.config.item_names())}."
                 )
 
         self.load_ai_agents()
@@ -684,14 +684,17 @@ class MarketplaceMonitor:
                 if for_item is None:
                     # get by asking user
                     name = None
-                    item_names = list(self.config.item.keys())
+                    item_names = self.config.item_names()
                     if len(item_names) > 1:
                         name = Prompt.ask(
                             f"""Enter name of {hilight("search item")}""", choices=item_names
                         )
-                    item_config = self.config.item[name or item_names[0]]
+                    found = self.config.find_item(name or item_names[0])
                 else:
-                    item_config = self.config.item[for_item]
+                    found = self.config.find_item(for_item)
+                if found is None:
+                    raise ValueError(f"Item {for_item} not found in config.")
+                item_config = found
 
                 # do not search, get the item details directly
                 listing_result = marketplace.get_listing_details(post_url, item_config)

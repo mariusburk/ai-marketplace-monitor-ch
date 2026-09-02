@@ -79,9 +79,14 @@ def _known_fields(cls: Type[Any]) -> List[str]:
 
 
 def validate_values(
-    kind: str, variant: str | None, name: str, values: Dict[str, Any]
+    kind: str, variant: str | List[str] | None, name: str, values: Dict[str, Any]
 ) -> Dict[str, str]:
     """Check one section against its real dataclass.
+
+    A hunt may name several marketplaces, and each validates the section with
+    its own class — so such a hunt may only use options every one of them
+    accepts. Checking against all of them here turns that into a field error
+    instead of a crash mid-search.
 
     Returns a mapping of field name to message, empty when the section is
     valid. The loader raises one ValueError at a time and names the offending
@@ -89,12 +94,25 @@ def validate_values(
     option name in the text; anything unattributable is reported against ``""``
     and shown at the top of the form.
     """
+    variants: List[str | None] = (
+        list(variant) if isinstance(variant, list) else [variant]  # type: ignore[list-item]
+    )
+    for one in variants or [None]:
+        errors = _validate_one(kind, one, name, values)
+        if errors:
+            return errors
+    return {}
+
+
+def _validate_one(
+    kind: str, variant: str | None, name: str, values: Dict[str, Any]
+) -> Dict[str, str]:
     cls = config_class(kind, variant)
     known = _known_fields(cls)
 
     unknown = [key for key in values if key not in known]
     if unknown:
-        return dict.fromkeys(unknown, "Diese Option kennt dieser Abschnitt nicht.")
+        return dict.fromkeys(unknown, f"Diese Option kennt {variant or 'dieser Abschnitt'} nicht.")
 
     payload = {k: v for k, v in values.items() if v not in (None, "", [])}
     payload["name"] = name
@@ -210,7 +228,7 @@ class SectionService:
         self,
         kind: str,
         name: str,
-        variant: str | None,
+        variant: str | List[str] | None,
         values: Dict[str, Any],
         *,
         create: bool,
@@ -243,7 +261,7 @@ class SectionService:
             return {"": error or "Die Konfiguration wurde abgelehnt."}
         return {}
 
-    def _market_type(self, kind: str, variant: str | None) -> str | None:
+    def _market_type(self, kind: str, variant: Any) -> Any:
         """Which config class a section validates against.
 
         For an item, ``variant`` names a *marketplace section*, which may be
@@ -252,6 +270,8 @@ class SectionService:
         """
         if kind != "item" or not variant:
             return variant
+        if isinstance(variant, list):
+            return [self._market_type(kind, one) for one in variant]
         for section in self.list_sections():
             if section["kind"] == "marketplace" and section["name"] == variant:
                 declared = section["values"].get("market_type")

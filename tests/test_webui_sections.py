@@ -390,3 +390,53 @@ def test_add_delete_is_stable(tmp_path: Path) -> None:
     assert "# Kommentar, der überleben muss" in once
     assert "[marketplace.tutti]" in once
     assert "[user.me]" in once
+
+
+#
+# Hunts on several marketplaces
+#
+
+
+def test_saving_a_hunt_on_two_marketplaces(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[marketplace.tutti]\ncanton = ['ZH']\n\n"
+        "[marketplace.facebook]\nsearch_city = 'zurich'\n\n"
+        "[user.me]\npushbullet_token = 'o.x'\n",
+        encoding="utf-8",
+    )
+    service = SectionService(ConfigFileService([path]))
+
+    errors = service.save_section(
+        "item", "gopro", ["tutti", "facebook"], {"search_phrases": ["GoPro"]}, create=True
+    )
+
+    assert errors == {}
+    assert 'marketplace = ["tutti", "facebook"]' in path.read_text(encoding="utf-8")
+
+
+def test_an_option_only_one_marketplace_accepts_is_a_field_error(tmp_path: Path) -> None:
+    """Canton is tutti-only, so it cannot go on a hunt that also runs on facebook."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[marketplace.tutti]\ncanton = ['ZH']\n\n"
+        "[marketplace.facebook]\nsearch_city = 'zurich'\n\n"
+        "[user.me]\npushbullet_token = 'o.x'\n",
+        encoding="utf-8",
+    )
+    service = SectionService(ConfigFileService([path]))
+
+    errors = service.save_section(
+        "item",
+        "gopro",
+        ["tutti", "facebook"],
+        {"search_phrases": ["GoPro"], "canton": ["ZH"]},
+        create=True,
+    )
+
+    assert "canton" in errors
+    assert "facebook" in errors["canton"]
+
+
+def test_validate_values_accepts_a_single_variant_unchanged() -> None:
+    assert validate_values("item", "tutti", "velo", {"search_phrases": ["velo"]}) == {}

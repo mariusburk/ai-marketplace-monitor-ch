@@ -196,28 +196,74 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
 
         self.item = {}
         for item_name, item_config in config["item"].items():
-            # if marketplace is specified, it must exist
-            if "marketplace" in item_config:
-                if item_config["marketplace"] not in config["marketplace"]:
-                    raise ValueError(
-                        f"Item {hilight(item_name)} specifies a marketplace that does not exist."
-                    )
+            targets = self.item_marketplaces(item_name, item_config, config["marketplace"])
 
-            for marketplace_name, markerplace_config in config["marketplace"].items():
+            for marketplace_name in targets:
                 marketplace_class = supported_marketplaces[
-                    markerplace_config.get("market_type", default_market_type(marketplace_name))
-                ]
-                if (
-                    "marketplace" not in item_config
-                    or item_config["marketplace"] == marketplace_name
-                ):
-                    # use the first available marketplace
-                    self.item[item_name] = marketplace_class.get_item_config(
-                        name=item_name,
-                        marketplace=marketplace_name,
-                        **{x: y for x, y in item_config.items() if x != "marketplace"},
+                    config["marketplace"][marketplace_name].get(
+                        "market_type", default_market_type(marketplace_name)
                     )
-                    break
+                ]
+                # One authored item becomes one runtime config per marketplace,
+                # each validated by that marketplace's own class. `.name` stays
+                # the authored name, so counters, notifications and log lines
+                # keep talking about one hunt; only the dict key is suffixed,
+                # and only when there is more than one target.
+                key = item_name if len(targets) == 1 else f"{item_name}@{marketplace_name}"
+                self.item[key] = marketplace_class.get_item_config(
+                    name=item_name,
+                    marketplace=marketplace_name,
+                    **{x: y for x, y in item_config.items() if x != "marketplace"},
+                )
+
+    def find_item(self: "Config", name: str) -> TItemConfig | None:
+        """Look an item up by its key or by its authored name.
+
+        An item searched on several marketplaces is stored once per
+        marketplace under a suffixed key, so a plain name still has to resolve
+        — that is what a person types on the command line.
+        """
+        if name in self.item:
+            return self.item[name]
+        for item in self.item.values():
+            if item.name == name:
+                return item
+        return None
+
+    def item_names(self: "Config") -> List[str]:
+        """The authored names, each listed once however many marketplaces it runs on."""
+        names: List[str] = []
+        for item in self.item.values():
+            if item.name not in names:
+                names.append(item.name)
+        return names
+
+    @staticmethod
+    def item_marketplaces(
+        item_name: str, item_config: Dict[str, Any], marketplaces: Dict[str, Any]
+    ) -> List[str]:
+        """Which marketplaces an item should be searched on.
+
+        A string names one, a list names several, and an absent value keeps the
+        historical behaviour of using the first marketplace defined — not all of
+        them, which would silently double the searches of existing configs.
+        """
+        declared = item_config.get("marketplace")
+        if declared is None:
+            return list(marketplaces)[:1]
+        names = [declared] if isinstance(declared, str) else list(declared)
+        if not names:
+            raise ValueError(f"Item {hilight(item_name)} lists no marketplace to search.")
+        for name in names:
+            if not isinstance(name, str) or name not in marketplaces:
+                raise ValueError(
+                    f"Item {hilight(item_name)} specifies a marketplace that does not exist: {name}"
+                )
+        seen: List[str] = []
+        for name in names:
+            if name not in seen:
+                seen.append(name)
+        return seen
 
     def validate_sections(self: "Config", config: Dict[str, Any]) -> None:
         # check for required sections
