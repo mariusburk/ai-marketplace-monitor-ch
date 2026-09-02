@@ -50,7 +50,7 @@ from .auth import (
 from .config_api import ConfigFileService
 from .config_auth import extract_credentials
 from .diagnostics import check_ai, check_notification, clear_cache, health
-from .found_export import iter_found_csv, iter_found_rows
+from .found_export import iter_found_csv, iter_found_records, iter_found_rows
 from .log_handler import LogBroadcastHandler
 from .schema import config_schema
 from .sections import SectionError, SectionService, validate_values
@@ -564,6 +564,38 @@ def create_app(
     # ------------------------------------------------------------------
     # Diagnostics: the checks that used to need a shell
     # ------------------------------------------------------------------
+
+    @app.get("/api/found")
+    async def found(
+        item: str = "",
+        marketplace: str = "",
+        limit: int = 50,
+        offset: int = 0,
+        _: str = Depends(require_session),
+    ) -> Dict[str, Any]:
+        """The finds feed: what was actually notified, newest first.
+
+        Shares its join with the CSV export — both read the same three cache
+        namespaces, and two joins would have drifted apart.
+        """
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+
+        records = [
+            record
+            for record in iter_found_records(cache)
+            if (not item or record["item"] == item)
+            and (not marketplace or record["marketplace"] == marketplace)
+        ]
+        page = records[offset : offset + limit]
+        return {
+            "finds": page,
+            "total": len(records),
+            "offset": offset,
+            "limit": limit,
+            "items": sorted({r["item"] for r in records if r["item"]}),
+            "marketplaces": sorted({r["marketplace"] for r in records if r["marketplace"]}),
+        }
 
     @app.get("/api/health")
     async def health_check(_: str = Depends(require_session)) -> Dict[str, Any]:

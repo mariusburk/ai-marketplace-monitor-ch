@@ -40,27 +40,33 @@ CSV_COLUMNS: List[str] = [
     "url",
 ]
 
-# (marketplace, listing_id, user, date, listing_hash, price)
-NotifiedRow = Tuple[str, str, str, str, Optional[str], Optional[str]]
+# (marketplace, listing_id, user, date, listing_hash, price, item)
+NotifiedRow = Tuple[str, str, str, str, Optional[str], Optional[str], Optional[str]]
 
 # Leading characters a spreadsheet may interpret as a formula.
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
-def _normalize_notified(value: Any) -> Tuple[str, Optional[str], Optional[str]]:
-    """Return (date, listing_hash, price) from a USER_NOTIFIED cache value.
+def _normalize_notified(
+    value: Any,
+) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
+    """Return (date, listing_hash, price, item) from a USER_NOTIFIED value.
 
-    Handles legacy shapes: a bare date string, a 2-tuple (date, hash), or the
-    current 3-tuple (date, hash, price).
+    Handles every shape written so far: a bare date string, a 2-tuple
+    (date, hash), a 3-tuple that adds the price, and the current 4-tuple that
+    adds the hunt name. Entries written before the hunt name was recorded
+    simply have none — they are not rewritten.
     """
     if isinstance(value, str):
-        return value, None, None
+        return value, None, None, None
     if isinstance(value, (tuple, list)):
         if len(value) == 2:
-            return value[0], value[1], None
-        if len(value) >= 3:
-            return value[0], value[1], value[2]
-    return "", None, None
+            return value[0], value[1], None, None
+        if len(value) == 3:
+            return value[0], value[1], value[2], None
+        if len(value) >= 4:
+            return value[0], value[1], value[2], value[3]
+    return "", None, None, None
 
 
 def _fallback_url(marketplace: str, listing_id: str) -> str:
@@ -101,13 +107,13 @@ def _collect_needed(
         if key[0] != CacheType.USER_NOTIFIED.value:
             continue
         try:
-            date, listing_hash, price = _normalize_notified(local_cache.get(key))
+            date, listing_hash, price, item = _normalize_notified(local_cache.get(key))
         except KeyboardInterrupt:
             raise
         except Exception:
             logger.debug("Skipping malformed USER_NOTIFIED entry %r", key, exc_info=True)
             continue
-        notified.append((key[1], key[2], key[3], date, listing_hash, price))
+        notified.append((key[1], key[2], key[3], date, listing_hash, price, item))
         needed_listings.add((key[1], key[2]))
         if listing_hash:
             needed_hashes.add(listing_hash)
@@ -149,44 +155,82 @@ def _load_lookups(
     return details_by_key, rating_by_hash
 
 
-def _to_row(
+def _to_record(
     notified: NotifiedRow,
     details_by_key: Dict[Tuple[str, str], Dict[str, Any]],
     rating_by_hash: Dict[str, Dict[str, Any]],
-) -> Dict[str, str]:
-    """Join one notified entry with its details and rating into a CSV row."""
-    marketplace, listing_id, user, date, listing_hash, price = notified
+) -> Dict[str, Any]:
+    """Join one notified entry with its details and rating.
+
+    This is the shared shape: the CSV export projects flat strings out of it,
+    and the web UI's feed sends it as-is. Both had to walk the same three cache
+    namespaces, and doing it twice would have meant two joins to keep in step.
+    """
+    marketplace, listing_id, user, date, listing_hash, price, item = notified
     details = details_by_key.get((marketplace, listing_id)) or {}
     rating = (rating_by_hash.get(listing_hash) if listing_hash else None) or {}
     return {
         "found_at": date or "",
-        "item": details.get("name", "") or "",
+        # From the notification, since cached details carry no hunt name.
+        "item": item or details.get("name", "") or "",
         "marketplace": marketplace,
+        "listing_id": listing_id,
         "title": details.get("title", "") or "",
+        # The notified price is what the user was told; details may have moved on.
         "price": (price if price is not None else details.get("price", "")) or "",
-        "rating": str(rating["score"]) if "score" in rating else "",
-        "ai_comment": rating.get("comment", "") or "",
+        "converted_price": details.get("converted_price", "") or "",
+        "price_comparison": details.get("price_comparison", "") or "",
+        # Structured so the UI can draw the price ruler rather than parse prose.
+        "price_basis": details.get("price_basis") or {},
+        "image": details.get("image", "") or "",
         "location": details.get("location", "") or "",
         "seller": details.get("seller", "") or "",
         "condition": details.get("condition", "") or "",
+        "description": details.get("description", "") or "",
+        "rating": rating.get("score"),
+        "ai_comment": rating.get("comment", "") or "",
         "notified_user": user,
         "url": details.get("post_url") or _fallback_url(marketplace, listing_id),
     }
 
 
-def iter_found_rows(local_cache: Cache) -> Iterator[Dict[str, str]]:
-    """Yield found-item rows lazily, one per USER_NOTIFIED entry, newest first.
+def _to_row(record: Dict[str, Any]) -> Dict[str, str]:
+    """Flatten a record into the CSV columns, which are strings throughout."""
+    return {
+        "found_at": record["found_at"],
+        "item": record["item"],
+        "marketplace": record["marketplace"],
+        "title": record["title"],
+        "price": record["price"],
+        "rating": str(record["rating"]) if record["rating"] is not None else "",
+        "ai_comment": record["ai_comment"],
+        "location": record["location"],
+        "seller": record["seller"],
+        "condition": record["condition"],
+        "notified_user": record["notified_user"],
+        "url": record["url"],
+    }
+
+
+def iter_found_records(local_cache: Cache) -> Iterator[Dict[str, Any]]:
+    """Yield joined finds lazily, newest first.
 
     Memory stays bounded to the notified subset: only the listing details and
-    ratings referenced by notified items are loaded, and row dicts are produced
+    ratings referenced by notified items are loaded, and records are produced
     one at a time rather than all at once.
     """
     notified, needed_listings, needed_hashes = _collect_needed(local_cache)
     details_by_key, rating_by_hash = _load_lookups(local_cache, needed_listings, needed_hashes)
-    # Sort the small notified tuples (not full row dicts) by found date, newest first.
+    # Sort the small notified tuples (not full records) by found date, newest first.
     notified.sort(key=lambda n: n[3] or "", reverse=True)
     for entry in notified:
-        yield _to_row(entry, details_by_key, rating_by_hash)
+        yield _to_record(entry, details_by_key, rating_by_hash)
+
+
+def iter_found_rows(local_cache: Cache) -> Iterator[Dict[str, str]]:
+    """Yield CSV rows, one per notified entry, newest first."""
+    for record in iter_found_records(local_cache):
+        yield _to_row(record)
 
 
 def build_found_rows(local_cache: Cache) -> List[Dict[str, str]]:

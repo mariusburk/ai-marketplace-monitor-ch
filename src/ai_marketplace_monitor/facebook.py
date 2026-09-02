@@ -17,7 +17,7 @@ from rich.pretty import pretty_repr
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
 from .price_index import PriceObservation, record, reference
-from .price_stats import convert_for_display, describe_price
+from .price_stats import convert_for_display, describe_price, price_basis
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -585,6 +585,7 @@ class FacebookMarketplace(Marketplace):
                     listing.price_comparison = describe_price(
                         amount, stats, currency_label, composition
                     )
+                    listing.price_basis = price_basis(amount, stats)
                     listing.converted_price = convert_for_display(
                         amount, currency or "", self.config.monitor_config, self.logger
                     )

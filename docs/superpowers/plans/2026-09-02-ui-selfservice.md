@@ -228,13 +228,32 @@ Each phase is independently shippable and leaves the app working.
       twenty minutes earlier were pooled with thirty fresh tutti ones into one
       median of CHF 135 from 35 listings.
 
-### Phase 4 — The finds feed
+### Phase 4 — The finds feed *(done)*
 
-- [ ] `GET /api/found` — paginated, filterable by hunt, joining the same three
-      cache namespaces `found_export.py` already joins. Refactor that module so
-      CSV export and this endpoint share one join.
-- [ ] Include `price_comparison` and the parsed `PriceStats` so the client can draw
-      the ruler without re-deriving it.
+- [x] `GET /api/found` — paginated, filterable by hunt and marketplace, and
+      returning the hunts and marketplaces present so the rail can be built.
+- [x] `found_export.py` refactored into one join with two projections:
+      `iter_found_records` produces the rich shape, `_to_row` flattens it for
+      the CSV. Both walked the same three cache namespaces; two joins would
+      have drifted.
+- [x] `Listing.price_basis` carries the numbers behind the comparison —
+      amount, minimum, median, maximum, count — so the UI can draw the price
+      ruler instead of parsing the sentence back apart. Defaulted and excluded
+      from the hash, like the other derived fields.
+- [x] **Fixed a pre-existing bug the live run exposed.** Cached listing details
+      always carried `name = ""`, because they are keyed by url and written
+      before the search assigns the hunt name. The CSV export's `item` column
+      had therefore always been empty, and the feed could not have filtered by
+      hunt. The name now goes into the notification entry, where the pairing
+      actually lives.
+- [x] That grew the `USER_NOTIFIED` value to a 4-tuple, and a second reader in
+      `user.py` still unpacked exactly three — which the notification tests
+      caught immediately. It now reads the first three positionally and ignores
+      the rest, so the next addition cannot break it the same way.
+- [x] Tests (20 new), including every notification shape ever written.
+      Verified live: the feed returns the real finds with their ratings, and a
+      fresh notification arrives tagged with its hunt while older entries keep
+      their blank name rather than being rewritten.
 
 ### Phase 5 — The interface
 

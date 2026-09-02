@@ -117,6 +117,19 @@ def describe_price(
     )
 
 
+def price_basis(price: int | None, stats: "PriceStats | None") -> Dict[str, int]:
+    """The numbers the price ruler needs, or {} when there is nothing to draw."""
+    if price is None or price <= 0 or stats is None:
+        return {}
+    return {
+        "amount": price,
+        "minimum": stats.minimum,
+        "median": stats.median,
+        "maximum": stats.maximum,
+        "count": stats.count,
+    }
+
+
 def convert_for_display(
     amount: int | None,
     source_currency: str,

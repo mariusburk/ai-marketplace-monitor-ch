@@ -1,5 +1,5 @@
-from dataclasses import asdict, dataclass
-from typing import Optional, Tuple, Type
+from dataclasses import asdict, dataclass, field
+from typing import Dict, Optional, Tuple, Type
 
 from diskcache import Cache  # type: ignore
 
@@ -28,6 +28,10 @@ class Listing:
     # quotes a different one. Empty when no conversion was needed or possible;
     # `price` always stays exactly what the marketplace printed.
     converted_price: str = ""
+    # The numbers behind `price_comparison`: amount, minimum, median, maximum,
+    # count. Kept structured so the web UI can draw the price ruler instead of
+    # parsing the sentence back apart.
+    price_basis: Dict[str, int] = field(default_factory=dict)
 
     @property
     def content(self: "Listing") -> Tuple[str, str, str]:
@@ -44,7 +48,7 @@ class Listing:
             {
                 x: (y.split("?")[0] if x == "post_url" else y)
                 for x, y in asdict(self).items()
-                if x not in ("image", "price_comparison", "converted_price")
+                if x not in ("image", "price_comparison", "converted_price", "price_basis")
             }
         )
 

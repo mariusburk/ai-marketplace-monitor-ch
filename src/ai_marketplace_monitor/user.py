@@ -100,7 +100,15 @@ class User:
     def to_cache(self: "User", listing: Listing, local_cache: Cache | None = None) -> None:
         (cache if local_cache is None else local_cache).set(
             self.notified_key(listing),
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), listing.hash, listing.price),
+            # The hunt name belongs here rather than in the cached listing
+            # details: details are keyed by url and written before the search
+            # assigns a name, so they carry an empty one.
+            (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                listing.hash,
+                listing.price,
+                listing.name,
+            ),
             tag=CacheType.USER_NOTIFIED.value,
         )
 
@@ -133,10 +141,12 @@ class User:
             notification_date, listing_hash, listing_price = notified, None, None
         else:
             assert isinstance(notified, tuple)
-            if len(notified) == 2:
-                notification_date, listing_hash, listing_price = (*notified, None)
-            else:
-                notification_date, listing_hash, listing_price = notified
+            # The entry has grown over time — a bare date, then a hash, then the
+            # price, and now the hunt name. Read the first three positionally
+            # and ignore anything after, so a future addition cannot break this
+            # the way the hunt name did.
+            padded = (*notified, None, None, None)
+            notification_date, listing_hash, listing_price = padded[:3]
 
         if listing_price is not None and self._is_discounted(listing_price, listing.price):
             return NotificationStatus.LISTING_DISCOUNTED
