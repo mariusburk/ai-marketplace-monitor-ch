@@ -22,7 +22,13 @@
   const cookie = (name) =>
     document.cookie.split("; ").find((c) => c.startsWith(name + "="))?.split("=")[1] || "";
 
-  const state = { schema: null, sections: [], hunt: "", health: null };
+  const state = {
+    schema: null,
+    sections: [],
+    hunt: "",
+    health: null,
+    filters: null,
+  };
 
   async function api(path, options = {}) {
     const opts = { credentials: "same-origin", headers: {}, ...options };
@@ -323,15 +329,155 @@
     return true;
   }
 
+  /* ---------- Filter und Sortierung --------------------------------------- */
+  //
+  // Both are applied by the server, not here: a page holds fifty finds, and
+  // sorting those fifty would order the page rather than the feed.
+
+  const SORT_LABELS = {
+    newest: "Neueste zuerst",
+    deal: "Bester Schnitt",
+    cheapest: "Günstigste zuerst",
+    dearest: "Teuerste zuerst",
+    rating: "Beste KI-Note",
+  };
+
+  const DEFAULT_FILTERS = {
+    sort: "newest",
+    min_rating: 0,
+    min_price: "",
+    max_price: "",
+    below_median: false,
+    marketplace: "",
+  };
+
+  function feedQuery() {
+    const f = state.filters;
+    const query = new URLSearchParams();
+    if (state.hunt) query.set("item", state.hunt);
+    if (f.sort !== "newest") query.set("sort", f.sort);
+    if (f.min_rating) query.set("min_rating", String(f.min_rating));
+    if (f.min_price) query.set("min_price", String(Number(f.min_price)));
+    if (f.max_price) query.set("max_price", String(Number(f.max_price)));
+    if (f.below_median) query.set("below_median", "true");
+    if (f.marketplace) query.set("marketplace", f.marketplace);
+    const text = query.toString();
+    return text ? `?${text}` : "";
+  }
+
+  const filtersAreDefault = () =>
+    Object.entries(DEFAULT_FILTERS).every(([key, value]) => state.filters[key] === value);
+
+  function renderFilters(body) {
+    const host = $("#filters");
+    if (!host) return;
+    host.replaceChildren();
+    const f = state.filters;
+    const apply = () => loadFeed();
+
+    // Sort
+    const sort = el("select", "filter-sort");
+    Object.entries(SORT_LABELS).forEach(([value, label]) => {
+      const option = el("option", null, label);
+      option.value = value;
+      sort.appendChild(option);
+    });
+    sort.value = f.sort;
+    sort.addEventListener("change", () => {
+      f.sort = sort.value;
+      apply();
+    });
+    host.appendChild(sort);
+
+    // Mindestnote
+    const stars = el("div", "segments small");
+    [0, 3, 4, 5].forEach((score) => {
+      const seg = el("button", "segment");
+      seg.type = "button";
+      seg.textContent = score === 0 ? "Alle Noten" : score === 5 ? "nur 5" : `ab ${score}`;
+      seg.setAttribute("aria-pressed", String(f.min_rating === score));
+      seg.addEventListener("click", () => {
+        f.min_rating = score;
+        apply();
+      });
+      stars.appendChild(seg);
+    });
+    host.appendChild(stars);
+
+    // Preis
+    const price = el("div", "filter-price");
+    const box = (key, placeholder) => {
+      const input = el("input");
+      input.type = "number";
+      input.min = "0";
+      input.placeholder = placeholder;
+      input.value = f[key];
+      // Not on every keystroke: each one is a request.
+      input.addEventListener("change", () => {
+        f[key] = input.value.trim();
+        apply();
+      });
+      return input;
+    };
+    price.append(box("min_price", "ab"), el("span", "dash", "–"), box("max_price", "bis"));
+    host.appendChild(price);
+
+    // Unter dem Median
+    const deal = el("button", "chip-pick");
+    deal.type = "button";
+    deal.textContent = "unter dem Median";
+    deal.title = "Nur Inserate, die günstiger sind als vergleichbare Angebote";
+    deal.setAttribute("aria-pressed", String(f.below_median));
+    deal.addEventListener("click", () => {
+      f.below_median = !f.below_median;
+      apply();
+    });
+    host.appendChild(deal);
+
+    // Marktplatz, nur wenn es mehr als einen gibt
+    const markets = (body && body.marketplaces) || [];
+    if (markets.length > 1) {
+      const group = el("div", "chips");
+      markets.forEach((name) => {
+        const chip = el("button", "chip-pick");
+        chip.type = "button";
+        chip.textContent = name;
+        chip.setAttribute("aria-pressed", String(f.marketplace === name));
+        chip.addEventListener("click", () => {
+          f.marketplace = f.marketplace === name ? "" : name;
+          apply();
+        });
+        group.appendChild(chip);
+      });
+      host.appendChild(group);
+    }
+
+    const reset = $("#filter-reset");
+    if (reset) {
+      reset.hidden = filtersAreDefault();
+      reset.onclick = () => {
+        state.filters = { ...DEFAULT_FILTERS };
+        apply();
+      };
+    }
+  }
+
   /* ---------- Funde ------------------------------------------------------ */
 
   async function loadFeed() {
+    if (!state.filters) state.filters = { ...DEFAULT_FILTERS };
     renderOnboarding();
     const feed = $("#feed");
     feed.replaceChildren(el("div", "skeleton"), el("div", "skeleton"));
     try {
-      const query = state.hunt ? `?item=${encodeURIComponent(state.hunt)}` : "";
-      const body = await api(`/api/found${query}`);
+      const body = await api(`/api/found${feedQuery()}`);
+      renderFilters(body);
+      const count = $("#feed-count");
+      if (count) {
+        const all = body.total_unfiltered;
+        count.textContent =
+          body.total === all ? `${all}` : `${body.total} von ${all}`;
+      }
       // From the config, not from the response: a hunt that has not found
       // anything yet is still a hunt, and filtering to one hunt used to leave
       // the rail with no way back to the others.
@@ -342,9 +488,11 @@
       if (!body.finds.length) {
         feed.replaceChildren(
           Object.assign(el("div", "state"), {
-            innerHTML:
-              "<b>Noch keine Funde</b>Sobald eine Jagd etwas findet, steht es hier. " +
-              "Über <em>Jetzt suchen</em> läuft sofort ein Durchgang.",
+            innerHTML: filtersAreDefault()
+              ? "<b>Noch keine Funde</b>Sobald eine Jagd etwas findet, steht es hier. " +
+                "Über <em>Jetzt suchen</em> läuft sofort ein Durchgang."
+              : "<b>Nichts passt zu diesen Filtern</b>Es gibt Funde, aber keinen, " +
+                "der alle gesetzten Bedingungen erfüllt.",
           })
         );
         return;

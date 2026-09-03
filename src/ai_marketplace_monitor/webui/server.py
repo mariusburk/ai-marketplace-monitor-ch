@@ -50,7 +50,7 @@ from .auth import (
 from .config_api import ConfigFileService
 from .config_auth import extract_credentials
 from .diagnostics import check_ai, check_notification, clear_cache, health, probe_ollama
-from .found_export import iter_found_csv, iter_found_records, iter_found_rows
+from .found_export import SORTS, iter_found_csv, iter_found_records, iter_found_rows, sort_records
 from .log_handler import LogBroadcastHandler
 from .schema import config_schema
 from .sections import SectionError, SectionService, validate_values
@@ -569,11 +569,20 @@ def create_app(
     async def found(
         item: str = "",
         marketplace: str = "",
+        sort: str = "newest",
+        min_rating: int = 0,
+        min_price: int = 0,
+        max_price: int = 0,
+        below_median: bool = False,
         limit: int = 50,
         offset: int = 0,
         _: str = Depends(require_session),
     ) -> Dict[str, Any]:
-        """The finds feed: what was actually notified, newest first.
+        """The finds feed: what was actually notified.
+
+        Filtering and ordering happen here rather than in the browser so that
+        paging stays honest — a page of fifty sorted client-side would only
+        ever sort those fifty.
 
         Shares its join with the CSV export — both read the same three cache
         namespaces, and two joins would have drifted apart.
@@ -581,20 +590,34 @@ def create_app(
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
 
+        # The unfiltered set still supplies the hunt and marketplace lists, so
+        # narrowing the feed never removes the way back out of the narrowing.
+        everything = list(iter_found_records(cache))
         records = [
             record
-            for record in iter_found_records(cache)
+            for record in everything
             if (not item or record["item"] == item)
             and (not marketplace or record["marketplace"] == marketplace)
+            and (not min_rating or (record["rating"] or 0) >= min_rating)
+            and (not min_price or (record["amount"] or 0) >= min_price)
+            and (not max_price or (record["amount"] is not None and record["amount"] <= max_price))
+            and (not below_median or (record["offset"] is not None and record["offset"] < 0))
         ]
+
+        records = sort_records(records, sort)
         page = records[offset : offset + limit]
         return {
             "finds": page,
             "total": len(records),
+            # What the feed holds before any filter, so the UI can say "12 of 340"
+            # rather than leaving a narrowed list looking like the whole thing.
+            "total_unfiltered": len(everything),
             "offset": offset,
             "limit": limit,
-            "items": sorted({r["item"] for r in records if r["item"]}),
-            "marketplaces": sorted({r["marketplace"] for r in records if r["marketplace"]}),
+            "sort": sort if sort in SORTS else "newest",
+            "sorts": list(SORTS),
+            "items": sorted({r["item"] for r in everything if r["item"]}),
+            "marketplaces": sorted({r["marketplace"] for r in everything if r["marketplace"]}),
         }
 
     @app.get("/api/health")

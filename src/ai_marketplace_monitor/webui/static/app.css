@@ -1170,3 +1170,37 @@ label { display: block; }
   color: var(--ink-300);
   text-decoration: line-through;
 }
+
+/* ---------- Filter bar over the finds ----------------------------------- */
+
+.feed-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.feed-head .section-head { margin: 0; }
+.feed-head .spacer { flex: 1; }
+.feed-count {
+  font: 500 12px/1 var(--sans);
+  color: var(--ink-300);
+  font-variant-numeric: tabular-nums;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 16px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--edge-soft);
+}
+.filters:empty { display: none; }
+.filters select,
+.filters input { width: auto; padding: 6px 9px; font-size: 12.5px; }
+.filter-sort { min-width: 168px; }
+.filters .segments.small .segment { padding: 6px 11px; font-size: 12.5px; }
+.filter-price { display: flex; align-items: center; gap: 6px; }
+.filter-price input { width: 78px; }
+.filter-price .dash { color: var(--ink-300); }

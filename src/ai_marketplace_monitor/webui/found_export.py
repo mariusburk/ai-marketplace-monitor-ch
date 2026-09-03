@@ -17,7 +17,8 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
+import re
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 from diskcache import Cache  # type: ignore
 
@@ -195,6 +196,74 @@ def _to_record(
     }
 
 
+def _with_numbers(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Add the two figures sorting and filtering need, computed once."""
+    record["amount"] = record_amount(record)
+    record["offset"] = record_offset(record)
+    return record
+
+
+# Digits at the start of a rendered price: "CHF 1'290.-", "$1,234", "280".
+_AMOUNT_RE = re.compile(r"(\d[\d,.'\u2019\u00a0 ]*)")
+
+
+def record_amount(record: Dict[str, Any]) -> int | None:
+    """The asking price as a number, for sorting and filtering.
+
+    The converted figure comes first where there is one, so a feed holding both
+    dollars and francs sorts in one currency rather than by whichever number
+    happens to be larger. Failing that, `price_basis` already holds the amount
+    the marketplace parsed for its own filtering.
+    """
+    for text in (record.get("converted_price"), record.get("price")):
+        matched = _AMOUNT_RE.search(str(text or ""))
+        if matched:
+            digits = re.sub(r"[^\d]", "", matched.group(1).split(".")[0])
+            if digits:
+                return int(digits)
+    amount = (record.get("price_basis") or {}).get("amount")
+    return int(amount) if amount else None
+
+
+def record_offset(record: Dict[str, Any]) -> int | None:
+    """How far the price sits from the going rate, in percent, or None.
+
+    Negative is below. This is what "best deal" sorts on — a cheap listing is
+    not a bargain if everything like it is cheap.
+    """
+    basis = record.get("price_basis") or {}
+    median = basis.get("median")
+    amount = basis.get("amount")
+    if not median or not amount:
+        return None
+    return round(((amount - median) / median) * 100)
+
+
+# How the feed may be ordered: a key, and whether it runs from high to low.
+SORTS: Dict[str, Tuple[Callable[[Dict[str, Any]], Any], bool]] = {
+    "newest": (lambda r: r["found_at"] or "", True),
+    "cheapest": (lambda r: r["amount"], False),
+    "dearest": (lambda r: r["amount"], True),
+    "rating": (lambda r: r["rating"], True),
+    # A cheap listing is not a bargain if everything like it is cheap.
+    "deal": (lambda r: r["offset"], False),
+}
+
+
+def sort_records(records: List[Dict[str, Any]], sort: str) -> List[Dict[str, Any]]:
+    """Order the feed, keeping records with nothing to sort on at the end.
+
+    A listing whose price could not be read, or that has no rating yet, must
+    not displace one that has — in either direction, which a plain `reverse`
+    would get wrong by flipping the "unknown" flag along with the value.
+    """
+    key, descending = SORTS.get(sort) or SORTS["newest"]
+    known = [r for r in records if key(r) is not None]
+    unknown = [r for r in records if key(r) is None]
+    known.sort(key=key, reverse=descending)
+    return known + unknown
+
+
 def _to_row(record: Dict[str, Any]) -> Dict[str, str]:
     """Flatten a record into the CSV columns, which are strings throughout."""
     return {
@@ -225,7 +294,7 @@ def iter_found_records(local_cache: Cache) -> Iterator[Dict[str, Any]]:
     # Sort the small notified tuples (not full records) by found date, newest first.
     notified.sort(key=lambda n: n[3] or "", reverse=True)
     for entry in notified:
-        yield _to_record(entry, details_by_key, rating_by_hash)
+        yield _with_numbers(_to_record(entry, details_by_key, rating_by_hash))
 
 
 def iter_found_rows(local_cache: Cache) -> Iterator[Dict[str, str]]:

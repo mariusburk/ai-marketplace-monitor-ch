@@ -97,7 +97,13 @@
           </button>
         </nav>
         <div>
-          <h2 class="section-head">Funde</h2>
+          <div class="feed-head">
+            <h2 class="section-head">Funde</h2>
+            <span id="feed-count" class="feed-count"></span>
+            <span class="spacer"></span>
+            <button id="filter-reset" class="ghost small" hidden>Filter zurücksetzen</button>
+          </div>
+          <div class="filters" id="filters"></div>
           <div class="feed" id="feed"></div>
         </div>
       </div>

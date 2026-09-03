@@ -5,7 +5,7 @@ these check that one join serves both rather than two drifting apart.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, List
 
 import pytest
 from diskcache import Cache
@@ -298,3 +298,142 @@ def test_user_records_the_hunt_name_when_notifying() -> None:
         cache.close()
 
     assert stored[3] == "gopro"
+
+
+#
+# Narrowing and ordering the feed
+#
+
+
+def _seed_priced(store: Cache, listing_id: str, price: int, score: int, median: int) -> None:
+    """One find with everything sorting and filtering read."""
+    _seed(store, listing_id, "gopro", f"CHF {price}", f"2026-09-0{listing_id} 10:00:00")
+    key = (CacheType.LISTING_DETAILS.value, f"https://www.tutti.ch/de/vi/x/{listing_id}")
+    details = dict(store.get(key))
+    details["converted_price"] = ""
+    details["price_basis"] = {
+        "amount": price,
+        "minimum": 50,
+        "median": median,
+        "maximum": 900,
+        "count": 30,
+    }
+    store.set(key, details, tag=CacheType.LISTING_DETAILS.value)
+    store.set(
+        (CacheType.AI_INQUIRY.value, "ollama", "gopro", f"hash-{listing_id}"),
+        {"score": score, "comment": "x"},
+        tag=CacheType.AI_INQUIRY.value,
+    )
+
+
+@pytest.fixture
+def priced(store: Cache) -> Cache:
+    #        id  price  note  median
+    _seed_priced(store, "1", 100, 2, 300)
+    _seed_priced(store, "2", 300, 5, 300)
+    _seed_priced(store, "3", 800, 4, 300)
+    return store
+
+
+def _prices(body: Dict[str, Any]) -> List[int]:
+    return [f["amount"] for f in body["finds"]]
+
+
+def test_cheapest_and_dearest_are_opposites(tmp_path: Path, priced: Cache) -> None:
+    client = _client(tmp_path, priced)
+
+    cheap = _prices(client.get("/api/found", params={"sort": "cheapest"}).json())
+    dear = _prices(client.get("/api/found", params={"sort": "dearest"}).json())
+
+    assert cheap == [100, 300, 800]
+    assert dear == [800, 300, 100]
+
+
+def test_the_best_rating_comes_first(tmp_path: Path, priced: Cache) -> None:
+    body = _client(tmp_path, priced).get("/api/found", params={"sort": "rating"}).json()
+
+    assert [f["rating"] for f in body["finds"]] == [5, 4, 2]
+
+
+def test_the_best_deal_is_not_simply_the_cheapest(tmp_path: Path, store: Cache) -> None:
+    """A cheap listing is not a bargain if everything like it is cheap."""
+    _seed_priced(store, "1", 100, 4, 100)  # exactly the going rate
+    _seed_priced(store, "2", 300, 4, 600)  # half the going rate
+    client = _client(tmp_path, store)
+
+    body = client.get("/api/found", params={"sort": "deal"}).json()
+
+    assert _prices(body) == [300, 100]
+    assert _prices(client.get("/api/found", params={"sort": "cheapest"}).json()) == [100, 300]
+
+
+def test_a_find_with_nothing_to_sort_on_goes_last(tmp_path: Path, priced: Cache) -> None:
+    """In both directions — a plain reverse would put the blanks first."""
+    _seed(priced, "9", "gopro", "", "2026-09-09 10:00:00")
+    # `_seed` fills in a converted price; a find with no price at all has none.
+    key = (CacheType.LISTING_DETAILS.value, "https://www.tutti.ch/de/vi/x/9")
+    details = dict(priced.get(key))
+    details.update(price="", converted_price="", price_basis={})
+    priced.set(key, details, tag=CacheType.LISTING_DETAILS.value)
+    client = _client(tmp_path, priced)
+
+    for order in ("cheapest", "dearest"):
+        body = client.get("/api/found", params={"sort": order}).json()
+        assert body["finds"][-1]["listing_id"] == "9", order
+
+
+def test_filtering_by_stars(tmp_path: Path, priced: Cache) -> None:
+    body = _client(tmp_path, priced).get("/api/found", params={"min_rating": 4}).json()
+
+    assert sorted(f["rating"] for f in body["finds"]) == [4, 5]
+    assert body["total"] == 2
+    # and the whole feed is still reported, so the UI can say "2 of 3"
+    assert body["total_unfiltered"] == 3
+
+
+def test_narrowing_the_price(tmp_path: Path, priced: Cache) -> None:
+    client = _client(tmp_path, priced)
+
+    assert _prices(client.get("/api/found", params={"min_price": 300}).json()) == [800, 300]
+    assert _prices(client.get("/api/found", params={"max_price": 300}).json()) == [300, 100]
+    assert _prices(
+        client.get("/api/found", params={"min_price": 200, "max_price": 400}).json()
+    ) == [300]
+
+
+def test_only_what_is_below_the_going_rate(tmp_path: Path, priced: Cache) -> None:
+    body = _client(tmp_path, priced).get("/api/found", params={"below_median": True}).json()
+
+    assert _prices(body) == [100]
+
+
+def test_the_lists_that_build_the_filters_ignore_the_filters(
+    tmp_path: Path, priced: Cache
+) -> None:
+    """Otherwise narrowing to one hunt would remove the way back to the others."""
+    body = (
+        _client(tmp_path, priced)
+        .get("/api/found", params={"min_rating": 5, "item": "gopro"})
+        .json()
+    )
+
+    assert body["total"] == 1
+    assert body["items"] == ["gopro"]
+    assert body["marketplaces"] == ["tutti"]
+
+
+def test_an_unknown_sort_falls_back_to_newest(tmp_path: Path, priced: Cache) -> None:
+    body = _client(tmp_path, priced).get("/api/found", params={"sort": "nonsense"}).json()
+
+    assert body["sort"] == "newest"
+    assert [f["listing_id"] for f in body["finds"]] == ["3", "2", "1"]
+
+
+def test_the_amount_prefers_the_converted_figure() -> None:
+    """A feed holding dollars and francs has to sort in one currency."""
+    from ai_marketplace_monitor.webui.found_export import record_amount
+
+    assert record_amount({"price": "$350", "converted_price": "CHF 310"}) == 310
+    assert record_amount({"price": "CHF 1'290.-", "converted_price": ""}) == 1290
+    assert record_amount({"price": "", "converted_price": "", "price_basis": {"amount": 42}}) == 42
+    assert record_amount({"price": "", "converted_price": ""}) is None
