@@ -1188,7 +1188,18 @@
     return values;
   }
 
-  function showErrors(form, errors, only) {
+  /**
+   * Paint errors onto the fields they belong to.
+   *
+   * `owns` decides which errors this screen may report. While stepping through
+   * a wizard a missing search phrase must not block the step that asks for the
+   * marketplace — but nor may it be reported *there*, as a banner about a
+   * field three screens back, which is what judging by "is it in the DOM"
+   * produced. An error with no field at all is always shown: it has nowhere
+   * else to go, and swallowing it left the form looking like the button had
+   * not worked.
+   */
+  function showErrors(form, errors, owns) {
     form.querySelectorAll(".field").forEach((f) => {
       f.classList.remove("invalid");
       f.querySelectorAll(".field-error").forEach((e) => e.remove());
@@ -1196,20 +1207,32 @@
     const banner = $("#form-error");
     banner.hidden = true;
     let shown = 0;
+    let first = null;
     Object.entries(errors || {}).forEach(([name, message]) => {
+      if (name && owns && !owns(name)) return;
       const target = form.querySelector(`.field[data-field="${name}"]`);
-      if (only && !(target && only.contains(target))) return;
       shown += 1;
       if (target) {
         target.classList.add("invalid");
         target.appendChild(el("p", "field-error", message));
-        target.scrollIntoView({ block: "nearest" });
+        if (!first) first = target;
       } else {
         banner.textContent = message;
         banner.hidden = false;
       }
     });
+    if (first) first.scrollIntoView({ block: "nearest" });
     return shown;
+  }
+
+  // Which step a field belongs to, so a save that fails on something asked
+  // three screens ago can go back to it instead of reporting it where it
+  // cannot be fixed.
+  function stepOf(steps, name) {
+    if (name === "__name") return 0;
+    return steps.findIndex((step) =>
+      [...step.fields, ...step.advanced].some((f) => f.name === name)
+    );
   }
 
   /**
@@ -1225,6 +1248,9 @@
     const modal = $("#form-modal");
     const form = $("#section-form");
     const wizard = !opts.values;
+    // Null while editing: the name is fixed then, and checking it against the
+    // list would flag the section for colliding with itself.
+    const existingNames = opts.taken ? opts.taken() : null;
     let at = 0;
 
     $("#form-modal-title").textContent = opts.title;
@@ -1313,8 +1339,45 @@
       opts.values = { ...(opts.values || {}), ...readForm(form) };
     };
 
+    // The name is asked on the first step, so it is checked there — against
+    // the same rule the writer applies, which the schema hands over rather
+    // than the browser keeping its own copy of it.
+    const checkName = () => {
+      if (existingNames === null) return null;
+      const rule = (state.schema && state.schema.name_rule) || {};
+      const value = (opts.name() || "").trim();
+      if (!value) return { __name: rule.missing || "Bitte einen Namen angeben." };
+      if (rule.pattern && !new RegExp(rule.pattern).test(value)) {
+        return { __name: rule.message || "Ungültiger Name." };
+      }
+      if (existingNames.includes(value)) {
+        return { __name: `${value} gibt es schon.` };
+      }
+      return null;
+    };
+
+    // A required field left empty, caught before the server says so. The
+    // config validators speak English and are shared with the command line;
+    // the obvious case does not need to reach them to be reported here.
+    const checkRequired = (step, typed) => {
+      const missing = [...step.fields, ...step.advanced].find(
+        (f) => f.required && (typed[f.name] === undefined || typed[f.name] === "")
+      );
+      return missing ? { [missing.name]: `${missing.label} wird gebraucht.` } : null;
+    };
+
     $("#form-next").onclick = async () => {
       const typed = readForm(form);
+      // The lead carries the name and the type; on the first step they are on
+      // screen and must be able to report, which scoping to the stage alone
+      // made impossible.
+      // A field belongs to this screen when its step is the one on screen;
+      // the name and the type are asked on the first.
+      const mine = (name) => !wizard || stepOf(opts.steps(), name) === at;
+      const nameError = at === 0 && checkName();
+      if (nameError && showErrors(form, nameError, mine)) return;
+      const blank = checkRequired(opts.steps()[at], typed);
+      if (blank && showErrors(form, blank, mine)) return;
       let errors = {};
       try {
         const res = await api(`/api/sections/${opts.kind}/validate`, {
@@ -1325,11 +1388,9 @@
       } catch (err) {
         errors = { "": err.message };
       }
-      // Only what this step could have caused: a hunt with no search phrase yet
-      // must not block leaving the step that asks for the marketplace.
-      if (showErrors(form, errors, stage.querySelector(".step-head")?.parentNode || stage)) return;
+      if (showErrors(form, errors, mine)) return;
       const localError = opts.checkStep && opts.checkStep(opts.steps()[at], typed);
-      if (localError && showErrors(form, localError, stage)) return;
+      if (localError && showErrors(form, localError, mine)) return;
       remember();
       at += 1;
       paint();
@@ -1344,10 +1405,29 @@
     $("#form-save").onclick = async () => {
       showErrors(form, {});
       remember();
+      const nameError = checkName();
+      if (nameError) {
+        if (wizard) at = 0;
+        paint();
+        showErrors(form, nameError, null);
+        return;
+      }
       try {
         const errors = await opts.onSave(opts.values || readForm(form));
         if (errors && Object.keys(errors).length) {
-          showErrors(form, errors);
+          // In a wizard the offending field may be three screens back, where
+          // an error message is no use at all. Go to it.
+          if (wizard) {
+            const steps = opts.steps();
+            const targets = Object.keys(errors)
+              .map((name) => stepOf(steps, name))
+              .filter((index) => index >= 0);
+            if (targets.length) {
+              at = Math.min(...targets);
+              paint();
+            }
+          }
+          showErrors(form, errors, null);
           return;
         }
         close();
@@ -1394,6 +1474,7 @@
       steps: () => stepsFor("item", chosen),
       variant: () => (chosen.length === 1 ? chosen[0] : chosen),
       name: () => name,
+      taken: existing ? null : () => of("item").map((s) => s.name),
       lead: (host) => {
         if (existing) return;
         const input = nameField(host, "hunt-name", "Name der Jagd", "gopro");
@@ -1453,8 +1534,7 @@
           );
         }
       },
-      checkStep: (step, typed) => {
-        if (step.id === "what" && !name) return { __name: "Bitte einen Namen angeben." };
+      checkStep: (step) => {
         if (step.id === "where" && !chosen.length)
           return { "": "Mindestens ein Marktplatz muss gewählt sein." };
         return null;
@@ -1555,6 +1635,7 @@
       steps: () => stepsFor(kind, variant),
       variant: () => variant,
       name: () => name,
+      taken: existing || SINGLETON_KINDS.has(kind) ? null : () => of(kind).map((s) => s.name),
       // Everything a channel owns that is not switched on stays out of the DOM,
       // so an unpicked way cannot be half-filled and then silently ignored.
       hidden: () => {
@@ -1633,7 +1714,6 @@
       checkStep: (step) => {
         if (step.id === "channels" && !picked.length)
           return { "": "Bitte mindestens einen Weg wählen." };
-        if (!name) return { __name: "Bitte einen Namen angeben." };
         return null;
       },
       onSave: async (values) => {

@@ -51,6 +51,14 @@ from ..tutti import SWISS_CANTONS, SiteLanguage
 from ..user import UserConfig
 from ..utils import MonitorConfig
 
+# What a section may be called. A name becomes a TOML table header, so it has
+# to survive being written as [kind.name]. The rule lives here rather than next
+# to the writer because the form has to apply it too — in the step that asks
+# for the name, not once everything else has been filled in.
+NAME_PATTERN = r"^[A-Za-z0-9_-]+$"
+NAME_MESSAGE = "Der Name darf nur Buchstaben, Ziffern, - und _ enthalten."
+NAME_MISSING = "Bitte einen Namen angeben."
+
 # Fields every section carries for bookkeeping rather than configuration. They
 # are set by the loader, not by a person, and have no place in a form.
 INTERNAL_FIELDS = frozenset({"name", "monitor_config", "searched_count"})
@@ -972,6 +980,11 @@ def config_schema() -> Dict[str, Any]:
     return {
         "kinds": kinds,
         "channels": [dataclasses.asdict(c) for c in channels()],
+        "name_rule": {
+            "pattern": NAME_PATTERN,
+            "message": NAME_MESSAGE,
+            "missing": NAME_MISSING,
+        },
         "marketplaces": sorted(supported_marketplaces),
         "ai_providers": sorted(supported_ai_backends),
     }

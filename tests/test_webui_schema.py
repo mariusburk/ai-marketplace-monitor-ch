@@ -8,6 +8,7 @@ notes that say so are claims about other files, and claims drift.
 """
 
 import dataclasses
+import re
 from typing import Any, Dict, List
 
 import pytest
@@ -356,6 +357,37 @@ def test_no_label_names_a_field_that_no_longer_exists() -> None:
     known |= {"market_type", "marketplace", "provider", "city_name", "radius"}
 
     assert not set(LABELS) - known
+
+
+#
+# The name, checked where it is asked
+#
+
+
+def test_the_form_is_told_the_name_rule() -> None:
+    """The browser applies it in the step that asks for the name.
+
+    Without this the only check was the writer's, which runs on save — so a
+    stray character surfaced four screens later, where it could not be fixed.
+    """
+    rule = config_schema()["name_rule"]
+
+    assert re.match(rule["pattern"], "gopro-2")
+    assert not re.match(rule["pattern"], "go pro!")
+    assert rule["message"] and rule["missing"]
+
+
+def test_the_writer_applies_the_very_same_rule() -> None:
+    """One rule, or the form and the file disagree about what a name is."""
+    from ai_marketplace_monitor.webui.sections import SectionError, validate_name
+
+    rule = config_schema()["name_rule"]
+
+    assert validate_name("gopro-2") == "gopro-2"
+    with pytest.raises(SectionError, match=re.escape(rule["message"])):
+        validate_name("go pro!")
+    with pytest.raises(SectionError, match=re.escape(rule["missing"])):
+        validate_name("   ")
 
 
 #

@@ -23,7 +23,7 @@ from ..notification import NotificationConfig
 from ..user import UserConfig
 from ..utils import MonitorConfig
 from .config_api import ConfigFileService, scan_sections
-from .schema import INTERNAL_FIELDS, describe_dataclass
+from .schema import INTERNAL_FIELDS, NAME_MESSAGE, NAME_MISSING, NAME_PATTERN, describe_dataclass
 from .secrets_redact import MASK
 
 # Section kinds the UI may edit. `region` and `translation` stay in the expert
@@ -35,8 +35,8 @@ EDITABLE_KINDS = ("marketplace", "item", "user", "notification", "ai", "monitor"
 # `[monitor.something]`. Their kind doubles as their name.
 SINGLETON_KINDS = ("monitor",)
 
-# A name has to survive being written as [kind.name], so no dots or brackets.
-_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# The form applies the same rule, so it is described once, in schema.py.
+_NAME_RE = re.compile(NAME_PATTERN)
 
 # The key each kind uses to say what it is. Writing it is not optional: without
 # `marketplace = "tutti"` on an item the loader binds it to whichever
@@ -51,9 +51,9 @@ class SectionError(ValueError):
 def validate_name(name: str) -> str:
     cleaned = (name or "").strip()
     if not cleaned:
-        raise SectionError("Bitte einen Namen angeben.")
+        raise SectionError(NAME_MISSING)
     if not _NAME_RE.match(cleaned):
-        raise SectionError("Der Name darf nur Buchstaben, Ziffern, - und _ enthalten.")
+        raise SectionError(NAME_MESSAGE)
     return cleaned
 
 
