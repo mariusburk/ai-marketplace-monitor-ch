@@ -22,6 +22,34 @@ class AIServiceProvider(Enum):
     OLLAMA = "Ollama"
 
 
+def price_placement(listing: "Listing", item_config: "TItemConfig") -> str:
+    """Where the asking price sits in the range the user asked for, in words.
+
+    Small models do this arithmetic badly and then reason from the wrong
+    answer. The amount is the one the marketplace already parsed for its own
+    filtering, so this says nothing the search did not already know.
+    """
+    amount = (listing.price_basis or {}).get("amount")
+    if not amount:
+        return ""
+    low = AIBackend._bound(getattr(item_config, "min_price", None))
+    high = AIBackend._bound(getattr(item_config, "max_price", None))
+    if low and amount < low:
+        return (
+            f"The asking price of {amount} is below the user's range of {low} to {high or 'any'}."
+        )
+    if high and amount > high:
+        return (
+            f"The asking price of {amount} is above the user's range of {low or 'any'} to {high}."
+        )
+    if low or high:
+        return (
+            f"The asking price of {amount} is inside the user's range of "
+            f"{low or 'any'} to {high or 'any'}."
+        )
+    return ""
+
+
 @dataclass
 class AIResponse:
     score: int
@@ -33,9 +61,9 @@ class AIResponse:
     @property
     def conclusion(self: "AIResponse") -> str:
         return {
-            1: "No match",
-            2: "Potential match",
-            3: "Poor match",
+            1: "Not the item",
+            2: "Wrong one",
+            3: "With reservations",
             4: "Good match",
             5: "Great deal",
         }[self.score]
@@ -178,6 +206,17 @@ class AIBackend(Generic[TAIConfig]):
     def connect(self: "AIBackend") -> None:
         raise NotImplementedError("Connect method must be implemented by subclasses.")
 
+    @staticmethod
+    def _bound(value: str | None) -> int | None:
+        """The number in a configured bound such as "300" or "300 CHF"."""
+        if not value:
+            return None
+        matched = re.search(r"\d[\d,.']*", str(value))
+        if matched is None:
+            return None
+        digits = re.sub(r"[^\d]", "", matched.group(0).split(".")[0])
+        return int(digits) if digits else None
+
     def get_prompt(
         self: "AIBackend",
         listing: Listing,
@@ -213,6 +252,12 @@ class AIBackend(Generic[TAIConfig]):
         # against the other offers of the same search, give it that instead.
         if listing.price_comparison:
             prompt += f"""For reference, {listing.price_comparison}.\n\n"""
+        # And state the arithmetic rather than leaving it to be done. A 7B model
+        # called CHF 320 "slightly above" a range of 150 to 450; a wrong premise
+        # costs a good listing a whole rung.
+        placement = price_placement(listing, item_config)
+        if placement:
+            prompt += f"""{placement}\n\n"""
         # prompt
         if item_config.prompt is not None:
             prompt += item_config.prompt
@@ -236,12 +281,22 @@ class AIBackend(Generic[TAIConfig]):
             prompt += f"\n{marketplace_config.rating_prompt.strip()}\n"
         else:
             prompt += (
-                "\nRate from 1 to 5 based on the following: \n"
-                "1 - No match: Missing key details, wrong category/brand, or suspicious activity (e.g., external links).\n"
-                "2 - Potential match: Lacks essential info (e.g., condition, brand, or model); needs clarification.\n"
-                "3 - Poor match: Some mismatches or missing details; acceptable but not ideal.\n"
-                "4 - Good match: Mostly meets criteria with clear, relevant details.\n"
-                "5 - Great deal: Fully matches criteria, with excellent condition or price.\n"
+                "\nRate from 1 to 5. The scale runs from worst to best, so use the "
+                "lowest rung that applies:\n"
+                "1 - Not the item: something else entirely. An accessory, a spare "
+                "part, a case or a bag *for* the item rather than the item; a "
+                "service, a repair or a rental; a scam; or a wanted ad, where the "
+                'poster is looking to buy rather than to sell (German "Suche", '
+                'French "Cherche", Italian "Cerco").\n'
+                "2 - Wrong one: the right kind of thing, but not the one asked for "
+                "— another model, generation or size — or too little information "
+                "to tell which it is.\n"
+                "3 - The right item, with reservations: it is what was asked for, "
+                "but the price, the condition or what is included gives real "
+                "pause.\n"
+                "4 - Good match: what was asked for, sensibly priced, clearly "
+                "described.\n"
+                "5 - Great deal: clearly a bargain, or in exceptional condition.\n"
                 "Conclude with:\n"
                 '"Rating <1-5>: <summary>"\n'
                 "where <1-5> is the rating and <summary> is a brief recommendation (max 30 words)."

@@ -347,7 +347,7 @@ class PushNotificationConfig(NotificationConfig):
             # saying it in words beats the marketplace's own "280 | 380", which
             # reads like a range rather than a reduction.
             if listing.original_price:
-                price_line = f"{price_line}, reduziert von {listing.original_price}"
+                price_line = f"{price_line}, reduced from {listing.original_price}"
             if listing.price_comparison:
                 price_line = f"{price_line} ({listing.price_comparison})"
 

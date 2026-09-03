@@ -51,10 +51,12 @@ def test_extra_prompt(
     assert "extra prompt" not in prompt
     assert "overrides marketplace prompt" in prompt
     #
-    assert "Great deal: Fully matches" in prompt
+    # the default scale, keyed on the line that says which way it runs rather
+    # than on any one rung's wording
+    assert "worst to best" in prompt
     item_config.rating_prompt = "something else"
     prompt = ollama.get_prompt(listing, item_config, marketplace_config)
-    assert "Great deal: Fully matches" not in prompt
+    assert "worst to best" not in prompt
     assert "something else" in prompt
     #
     assert "Evaluate how well this listing" in prompt

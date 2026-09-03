@@ -225,9 +225,9 @@
       // The pill carries the verdict; the model's sentence is prose and gets
       // its own line, or a long comment turns the chip into a paragraph.
       const labels = {
-        1: "Kein Treffer",
-        2: "Vielleicht",
-        3: "Passt teilweise",
+        1: "Falscher Artikel",
+        2: "Falsches Modell",
+        3: "Mit Vorbehalt",
         4: "Guter Fund",
         5: "Sehr guter Fund",
       };
