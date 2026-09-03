@@ -189,10 +189,31 @@ def test_a_closed_vocabulary_is_not_a_comma_box() -> None:
 
 
 def test_an_open_vocabulary_stays_typable() -> None:
-    """Tutti prints whatever condition it likes; the list is a suggestion."""
+    """A display currency may be anything; the four listed are only shortcuts."""
+    fields = {f.name: f for f in all_fields("monitor", "monitor")}
+
+    assert fields["currency"].control == "combo"
+    assert fields["currency"].open_choices
+
+
+def test_the_condition_is_picked_not_typed() -> None:
+    """One vocabulary for both marketplaces, in words rather than in slugs."""
+    fields = {f.name: f for f in all_fields("item", "tutti")}
+    condition = fields["condition"]
+
+    assert condition.control == "multi"
+    assert not condition.open_choices
+    assert condition.labels["used_like_new"] == "Gebraucht, wie neu"
+    # and the coarser marketplace is not left as a surprise
+    assert "tutti" in condition.note
+
+
+def test_keywords_are_built_not_written() -> None:
+    """`is_substring` parses AND/OR, but nobody should have to compose one."""
     fields = {f.name: f for f in all_fields("item", "tutti")}
 
-    assert fields["condition"].control == "combo"
+    assert fields["keywords"].control == "terms"
+    assert fields["antikeywords"].control == "words"
 
 
 def test_a_reference_names_the_kind_it_points_at() -> None:

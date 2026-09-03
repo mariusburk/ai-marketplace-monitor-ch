@@ -108,17 +108,30 @@ def test_an_empty_list_is_rejected(config_file: Callable) -> None:
         _config(config_file, "\n[item.velo]\nmarketplace = []\nsearch_phrases = 'velo'\n")
 
 
-def test_options_are_validated_per_marketplace(config_file: Callable) -> None:
-    """A hunt on both marketplaces may only use options both accept.
+def test_options_are_handed_to_the_marketplace_that_knows_them(config_file: Callable) -> None:
+    """A hunt on both marketplaces narrows each in that marketplace's own terms.
 
-    `canton` is tutti-only, so putting it on a hunt that also runs on facebook
-    has to fail loudly here rather than crash mid-search.
+    `canton` is tutti-only and `category` facebook-only. Requiring every option
+    to be understood by every target meant a hunt on both could narrow neither
+    — which is what made the location fields vanish from the form.
     """
-    with pytest.raises(TypeError, match="canton"):
+    config = _config(
+        config_file,
+        "\n[item.gopro]\nmarketplace = ['tutti', 'facebook']\n"
+        "search_phrases = 'GoPro'\ncanton = ['ZH']\ncategory = 'electronics'\n",
+    )
+
+    assert config.item["gopro@tutti"].canton == ["ZH"]
+    assert config.item["gopro@facebook"].category == "electronics"
+
+
+def test_an_option_no_chosen_marketplace_knows_still_fails(config_file: Callable) -> None:
+    """Deferring to a sibling must not turn a typo into silence."""
+    with pytest.raises(TypeError, match="kanton"):
         _config(
             config_file,
             "\n[item.gopro]\nmarketplace = ['tutti', 'facebook']\n"
-            "search_phrases = 'GoPro'\ncanton = ['ZH']\n",
+            "search_phrases = 'GoPro'\nkanton = ['ZH']\n",
         )
 
 

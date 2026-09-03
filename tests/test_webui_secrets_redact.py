@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from ai_marketplace_monitor.webui.secrets_redact import (
-    MASK,
-    has_mask,
-    redact,
-    restore,
-)
+from ai_marketplace_monitor.webui.secrets_redact import MASK, has_mask, redact, restore
 
 
 def test_redact_replaces_password_and_token() -> None:

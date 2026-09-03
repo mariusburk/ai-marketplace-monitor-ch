@@ -7,11 +7,7 @@ import logging
 import threading
 from typing import Any, Callable, Dict
 
-from ai_marketplace_monitor.webui.log_handler import (
-    LogBroadcastHandler,
-    _clean,
-    _redact,
-)
+from ai_marketplace_monitor.webui.log_handler import LogBroadcastHandler, _clean, _redact
 
 
 def _make_record(

@@ -13,11 +13,13 @@ in their names.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List
 
+import requests  # type: ignore
 from diskcache import Cache  # type: ignore
 
 from ..ai import AIBackend, AIResponse
@@ -254,6 +256,53 @@ def health(config_files: List[Path], cache: Cache | None = None) -> Dict[str, An
 
 # Which config keys stand for which notification channel. Presence of the key
 # is what the notifier itself checks, so presence is what gets reported.
+def probe_ollama(base_url: str) -> CheckResult:
+    """Ask an Ollama server which models it has.
+
+    Setting Ollama up meant knowing the address, guessing whether it answered,
+    and typing a model name exactly as `ollama list` prints it. The server
+    already publishes both facts, so the form asks it instead: this runs on the
+    address typed into the form, before anything is saved.
+
+    Returns the model names in ``detail`` so the form can offer them.
+    """
+    address = (base_url or "").strip()
+    if not address:
+        return CheckResult(False, "Bitte zuerst die Adresse des Ollama-Servers eintragen.")
+    # The config wants an OpenAI-compatible base_url ("…:11434/v1"), while the
+    # model list lives on Ollama's own API one level up. Accept either.
+    root = re.sub(r"/v1/?$", "", address.rstrip("/"))
+    if not root.startswith(("http://", "https://")):
+        root = f"http://{root}"
+    started = time.monotonic()
+    try:
+        response = requests.get(f"{root}/api/tags", timeout=8)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        return CheckResult(False, f"Keine Antwort von {root}: {exc}")
+
+    models = sorted(
+        str(entry.get("name") or entry.get("model") or "")
+        for entry in payload.get("models") or []
+        if entry.get("name") or entry.get("model")
+    )
+    took = time.monotonic() - started
+    if not models:
+        return CheckResult(
+            False,
+            f"{root} antwortet, hat aber kein Modell geladen. "
+            "Auf dem Server einmal `ollama pull <modell>` ausführen.",
+            detail={"base_url": f"{root}/v1", "models": []},
+        )
+    return CheckResult(
+        True,
+        f"{root} erreichbar, {len(models)} Modell{'e' if len(models) != 1 else ''} verfügbar "
+        f"({took:.1f}s).",
+        detail={"base_url": f"{root}/v1", "models": models},
+    )
+
+
 _METHOD_KEYS = {
     "pushbullet": ("pushbullet_token",),
     "pushover": ("pushover_user_key", "pushover_api_token"),
@@ -278,4 +327,5 @@ __all__ = [
     "check_notification",
     "clear_cache",
     "health",
+    "probe_ollama",
 ]

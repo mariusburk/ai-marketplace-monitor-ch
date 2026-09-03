@@ -13,10 +13,7 @@ from fastapi.testclient import TestClient
 
 from ai_marketplace_monitor.utils import CacheType
 from ai_marketplace_monitor.webui.config_api import ConfigFileService
-from ai_marketplace_monitor.webui.found_export import (
-    build_found_rows,
-    iter_found_records,
-)
+from ai_marketplace_monitor.webui.found_export import build_found_rows, iter_found_records
 from ai_marketplace_monitor.webui.log_handler import LogBroadcastHandler
 from ai_marketplace_monitor.webui.server import WebUIConfig, _resolve_auth, create_app
 

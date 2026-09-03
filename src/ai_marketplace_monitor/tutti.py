@@ -55,6 +55,48 @@ FREE_PRICE_WORDS = ("gratis", "gratuit", "geschenkt", "regalo")
 # Labels of the "condition" property on a listing detail page, per site language.
 CONDITION_LABELS = ("zustand", "état", "etat", "stato", "condition")
 
+# What tutti prints for a condition, per canonical value and site language.
+#
+# Facebook grades used goods three ways; tutti only says whether an item is new
+# or not. So one shared vocabulary is written in a config, and each marketplace
+# takes it as far as it goes — picking "used, good" here means every used
+# listing, because tutti cannot tell them apart.
+#
+# The German words are the ones the shipped fixtures show ("Neu", "Gebraucht").
+# The French and Italian ones are the plain translations; a listing in those
+# languages simply fails to match if they turn out to be wrong, which filters
+# nothing out rather than filtering the wrong things.
+CONDITION_WORDS: Dict[str, Dict[str, str]] = {
+    "de": {"new": "Neu", "used": "Gebraucht"},
+    "fr": {"new": "Neuf", "used": "Occasion"},
+    "it": {"new": "Nuovo", "used": "Usato"},
+}
+
+# The canonical values, as Facebook's Condition enum spells them.
+CANONICAL_CONDITIONS = {
+    "new": "new",
+    "used_like_new": "used",
+    "used_good": "used",
+    "used_fair": "used",
+}
+
+
+def tutti_conditions(conditions: List[str], site_language: str) -> List[str]:
+    """Translate canonical condition values into the words tutti prints.
+
+    Anything that is not a canonical value is passed through untouched, so a
+    hand-written config that already says "Gebraucht" keeps working.
+    """
+    words = CONDITION_WORDS.get(site_language, CONDITION_WORDS["de"])
+    out: List[str] = []
+    for value in conditions:
+        canonical = CANONICAL_CONDITIONS.get(str(value).strip().lower())
+        translated = words[canonical] if canonical else str(value)
+        if translated not in out:
+            out.append(translated)
+    return out
+
+
 NEXT_DATA_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
 
 # Leading amount of a formatted price. Swiss thousands separators appear as a
@@ -569,6 +611,8 @@ class TuttiMarketplace(Marketplace):
                 if item_config.condition is not None
                 else self.config.condition
             )
+            if conditions:
+                conditions = tutti_conditions(conditions, self.site_language)
             if conditions and not is_substring(conditions, item.condition, logger=self.logger):
                 if self.logger:
                     self.logger.info(

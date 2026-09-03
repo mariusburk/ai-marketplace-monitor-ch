@@ -374,8 +374,12 @@ def test_saving_a_hunt_on_two_marketplaces(tmp_path: Path) -> None:
     assert 'marketplace = ["tutti", "facebook"]' in path.read_text(encoding="utf-8")
 
 
-def test_an_option_only_one_marketplace_accepts_is_a_field_error(tmp_path: Path) -> None:
-    """Canton is tutti-only, so it cannot go on a hunt that also runs on facebook."""
+def test_an_option_only_one_marketplace_accepts_is_saved_anyway(tmp_path: Path) -> None:
+    """Canton is tutti-only; on a hunt that also runs on facebook it still counts.
+
+    The loader hands each marketplace only the options it understands, so the
+    hunt can narrow tutti by canton while facebook keeps its own city.
+    """
     path = tmp_path / "config.toml"
     path.write_text(
         "[marketplace.tutti]\ncanton = ['ZH']\n\n"
@@ -393,8 +397,28 @@ def test_an_option_only_one_marketplace_accepts_is_a_field_error(tmp_path: Path)
         create=True,
     )
 
-    assert "canton" in errors
-    assert "facebook" in errors["canton"]
+    assert errors == {}
+    assert "canton" in path.read_text(encoding="utf-8")
+
+
+def test_an_option_no_chosen_marketplace_knows_is_a_field_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[marketplace.tutti]\n\n[marketplace.facebook]\nsearch_city = 'zurich'\n\n"
+        "[user.me]\npushbullet_token = 'o.x'\n",
+        encoding="utf-8",
+    )
+    service = SectionService(ConfigFileService([path]))
+
+    errors = service.save_section(
+        "item",
+        "gopro",
+        ["tutti", "facebook"],
+        {"search_phrases": ["GoPro"], "kanton": ["ZH"]},
+        create=True,
+    )
+
+    assert "kanton" in errors
 
 
 def test_validate_values_accepts_a_single_variant_unchanged() -> None:
@@ -440,3 +464,20 @@ def test_the_missing_pieces_are_named_separately_from_errors() -> None:
     from ai_marketplace_monitor.config import IncompleteConfigError
 
     assert issubclass(IncompleteConfigError, ValueError)
+
+
+def test_a_replaced_section_keeps_a_blank_line_after_it(tmp_path: Path) -> None:
+    """Replacing a one-line section used to glue the next header onto it."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[monitor]\n\n[marketplace.tutti]\ncanton = ['ZH']\n\n"
+        "[user.me]\npushbullet_token = 'o.x'\n\n"
+        "[item.g]\nmarketplace = 'tutti'\nsearch_phrases = 'g'\n",
+        encoding="utf-8",
+    )
+    service = SectionService(ConfigFileService([path]))
+
+    service.save_section("monitor", "monitor", None, {"currency": "CHF"}, create=False)
+
+    written = path.read_text(encoding="utf-8")
+    assert 'currency = "CHF"\n\n[marketplace.tutti]' in written

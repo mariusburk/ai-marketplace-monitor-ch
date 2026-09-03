@@ -1067,3 +1067,97 @@ label { display: block; }
   border-color: transparent;
 }
 .onboard-step.done .who b { color: var(--ink-200); }
+
+/* ---------- Tag boxes and the keyword builder --------------------------- */
+
+.tagbox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-in);
+  background: var(--slate-300);
+}
+.tagbox:focus-within { border-color: var(--brass); }
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: var(--slate-000);
+  border: 1px solid var(--edge-loud);
+  font: 500 12.5px/1 var(--sans);
+  color: var(--ink-000);
+}
+.tag-x {
+  border: 0;
+  background: transparent;
+  color: var(--ink-300);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.tag-x:hover { color: var(--over); background: transparent; }
+.tag-input {
+  flex: 1;
+  min-width: 90px;
+  width: auto;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
+  font-size: 13.5px;
+}
+.tag-input:focus { outline: none; }
+.or {
+  font: 500 11px/1 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-300);
+}
+
+/* Rows joined by AND, each row satisfied by any one of its words. */
+.groups { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.groups > button { margin-top: 2px; }
+.group { display: flex; align-items: center; gap: 10px; width: 100%; }
+.group-body { flex: 1; min-width: 0; }
+.joiner {
+  flex: none;
+  width: 26px;
+  font: 500 11px/1 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-300);
+}
+.group:first-child .group-body { margin-left: 36px; }
+.group:not(:first-child) .group-body { margin-left: 0; }
+
+/* A caveat is not a default; it is true whatever you enter. */
+.caveat {
+  margin: 7px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--warn);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-200);
+}
+
+/* Which marketplace an option belongs to, on a hunt that spans several. */
+.only {
+  font: 500 11px/1 var(--sans);
+  color: var(--brass);
+  letter-spacing: 0.04em;
+}
+
+/* A hunt that has not found anything yet still belongs in the rail. */
+.hunt .note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ink-300);
+}
+.hunt.quiet .name { color: var(--ink-100); }

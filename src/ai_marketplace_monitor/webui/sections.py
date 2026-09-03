@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import Any, Dict, List, Type
+import typing
+from typing import Any, Dict, List, Set, Type
 
 from ..config import supported_ai_backends, supported_marketplaces
 from ..notification import NotificationConfig
@@ -56,23 +57,34 @@ def validate_name(name: str) -> str:
     return cleaned
 
 
+def _returned_dataclass(factory: Any) -> Type[Any]:
+    """The config class a factory returns, read off its annotation.
+
+    Building a throwaway instance to look at its type needs arguments that
+    satisfy every validator, and there is no set that does: ``OllamaConfig``
+    demands a ``base_url``, which is exactly what a form is about to ask for.
+    So the shape is read from the signature instead of conjured from a value.
+    """
+    annotation = typing.get_type_hints(factory).get("return")
+    if not dataclasses.is_dataclass(annotation):
+        raise SectionError("Zu diesem Abschnitt gibt es keine bekannte Form.")
+    return annotation  # type: ignore[return-value]
+
+
 def config_class(kind: str, variant: str | None) -> Type[Any]:
     """The dataclass a section of this kind and variant validates against."""
-    if kind == "marketplace":
+    if kind in ("marketplace", "item"):
         cls = supported_marketplaces.get(variant or "facebook")
         if cls is None:
             raise SectionError(f"Unbekannter Marktplatz: {variant}")
-        return type(cls.get_config(name="probe"))
-    if kind == "item":
-        cls = supported_marketplaces.get(variant or "facebook")
-        if cls is None:
-            raise SectionError(f"Unbekannter Marktplatz: {variant}")
-        return type(cls.get_item_config(name="probe", search_phrases=["probe"]))
+        return _returned_dataclass(
+            cls.get_config if kind == "marketplace" else cls.get_item_config
+        )
     if kind == "ai":
         backend = supported_ai_backends.get(variant or "")
         if backend is None:
             raise SectionError(f"Unbekannter KI-Anbieter: {variant}")
-        return type(backend.get_config(name="probe", api_key="probe", model="probe"))
+        return _returned_dataclass(backend.get_config)
     if kind == "user":
         return UserConfig
     if kind == "notification":
@@ -105,24 +117,36 @@ def validate_values(
     variants: List[str | None] = (
         list(variant) if isinstance(variant, list) else [variant]  # type: ignore[list-item]
     )
+    others = [v for v in variants if v]
     for one in variants or [None]:
-        errors = _validate_one(kind, one, name, values)
+        errors = _validate_one(kind, one, name, values, siblings=others)
         if errors:
             return errors
     return {}
 
 
 def _validate_one(
-    kind: str, variant: str | None, name: str, values: Dict[str, Any]
+    kind: str,
+    variant: str | None,
+    name: str,
+    values: Dict[str, Any],
+    siblings: List[str] | None = None,
 ) -> Dict[str, str]:
     cls = config_class(kind, variant)
     known = _known_fields(cls)
+    # An option another chosen marketplace knows is not this one's business.
+    # A hunt on facebook and tutti narrows each in its own way, and the loader
+    # hands each class only what it understands (`Config._options_for`).
+    elsewhere: Set[str] = set()
+    for other in siblings or []:
+        if other != variant:
+            elsewhere |= set(_known_fields(config_class(kind, other)))
 
-    unknown = [key for key in values if key not in known]
+    unknown = [key for key in values if key not in known and key not in elsewhere]
     if unknown:
         return dict.fromkeys(unknown, f"Diese Option kennt {variant or 'dieser Abschnitt'} nicht.")
 
-    payload = {k: v for k, v in values.items() if v not in (None, "", [])}
+    payload = {k: v for k, v in values.items() if v not in (None, "", []) and k in known}
     payload["name"] = name
     try:
         cls(**payload)
@@ -344,6 +368,14 @@ class SectionService:
             head.pop()
         if head:
             head.append("\n")
+
+        # The same normalisation on the other side. Replacing a one-line
+        # section used to leave the next header glued to it — still valid TOML,
+        # but nobody wants to read that.
+        while tail and not tail[0].strip():
+            tail.pop(0)
+        if tail:
+            tail.insert(0, "\n")
 
         result = "".join(head) + rendered + "".join(tail)
         return result if result.endswith("\n") else result + "\n"

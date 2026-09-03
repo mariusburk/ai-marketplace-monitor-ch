@@ -3,11 +3,7 @@
 import pytest
 
 from ai_marketplace_monitor.listing import Listing
-from ai_marketplace_monitor.price_stats import (
-    MIN_REFERENCE_PRICES,
-    PriceStats,
-    describe_price,
-)
+from ai_marketplace_monitor.price_stats import MIN_REFERENCE_PRICES, PriceStats, describe_price
 
 
 def test_stats_from_prices() -> None:

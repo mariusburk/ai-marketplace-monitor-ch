@@ -1,10 +1,12 @@
+import dataclasses
 import sys
+import typing
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import chain
 from logging import Logger
 from pathlib import Path
-from typing import Any, Dict, Generic, List
+from typing import Any, Dict, Generic, List, Set
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -49,6 +51,18 @@ supported_ai_backends = {
     "anthropic": AnthropicBackend,
     "ollama": OllamaBackend,
 }
+
+
+def item_option_names(marketplace_class: Any) -> Set[str]:
+    """Every option a marketplace's item config accepts.
+
+    Read off the return annotation of ``get_item_config`` rather than by
+    calling it, which would need a valid set of arguments to inspect a shape.
+    """
+    annotation = typing.get_type_hints(marketplace_class.get_item_config).get("return")
+    if not dataclasses.is_dataclass(annotation):
+        return set()
+    return {f.name for f in dataclasses.fields(annotation)}
 
 
 class IncompleteConfigError(ValueError):
@@ -225,8 +239,42 @@ class Config(Generic[TAIConfig, TItemConfig, TMarketplaceConfig]):
                 self.item[key] = marketplace_class.get_item_config(
                     name=item_name,
                     marketplace=marketplace_name,
-                    **{x: y for x, y in item_config.items() if x != "marketplace"},
+                    **self._options_for(
+                        item_name, item_config, marketplace_class, targets, config
+                    ),
                 )
+
+    @staticmethod
+    def _options_for(
+        item_name: str,
+        item_config: Dict[str, Any],
+        marketplace_class: Any,
+        targets: List[str],
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """The options of one hunt that this marketplace can actually take.
+
+        A hunt on both facebook and tutti has to be able to name a city *and* a
+        canton — each marketplace narrows differently, and neither knows the
+        other's option. Passing all of them to both classes raises a TypeError,
+        which is why choosing two marketplaces used to make the location
+        fields disappear from the form entirely.
+
+        So an option one target knows and this one does not is skipped here.
+        An option *no* target knows is still passed on, and still raises: that
+        is a typo, and swallowing it would hide it.
+        """
+        options = {x: y for x, y in item_config.items() if x != "marketplace"}
+        if len(targets) == 1:
+            return options
+        known = item_option_names(marketplace_class)
+        elsewhere: set[str] = set()
+        for other in targets:
+            other_class = supported_marketplaces[
+                config["marketplace"][other].get("market_type", default_market_type(other))
+            ]
+            elsewhere |= item_option_names(other_class)
+        return {x: y for x, y in options.items() if x in known or x not in elsewhere}
 
     def find_item(self: "Config", name: str) -> TItemConfig | None:
         """Look an item up by its key or by its authored name.

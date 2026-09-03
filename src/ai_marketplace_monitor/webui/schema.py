@@ -372,6 +372,12 @@ class FieldHint:
     # The section kind whose names are this field's legal values. The schema
     # cannot know which recipients exist; the UI fills the options in.
     references: str = ""
+    # Readable names for the values in `choices`, where the stored value is a
+    # machine word ("used_like_new").
+    labels: Dict[str, str] = field(default_factory=dict)
+    # A caveat shown beside the field: something true about this option that is
+    # not about leaving it empty.
+    note: str = ""
     # Other fields this control edits alongside its own. Facebook zips
     # search_city, city_name, radius and currency positionally, and a shorter
     # list silently truncates the search — one row per place makes the lengths
@@ -387,13 +393,15 @@ FIELD_HINTS: Dict[str, FieldHint] = {
         required=True,
     ),
     "keywords": FieldHint(
-        help="Muss in Titel oder Beschreibung vorkommen. UND, ODER und Klammern sind erlaubt.",
+        help="Jede Zeile muss zutreffen. Innerhalb einer Zeile genügt eines der Wörter.",
         default_note="Leer: kein Wort wird verlangt.",
-        placeholder="(gopro OR 'go pro') AND (12 OR 13)",
+        placeholder="gopro",
+        control="terms",
     ),
     "antikeywords": FieldHint(
-        help="Schliesst ein Inserat aus, wenn es vorkommt.",
+        help="Kommt eines dieser Wörter vor, fliegt das Inserat raus.",
         default_note="Leer: nichts wird ausgeschlossen.",
+        control="words",
     ),
     "description": FieldHint(
         help="Freitext für die KI-Bewertung. Beeinflusst nur die Note, nicht die Suche.",
@@ -490,11 +498,21 @@ FIELD_HINTS: Dict[str, FieldHint] = {
         default_note="Leer: es gelten die Orte oben.",
     ),
     # facebook.py:435 — the URL carries no itemCondition when the list is empty.
+    # One vocabulary for both marketplaces. Facebook grades used goods three
+    # ways and tutti only says new or used, so `tutti_conditions` widens the
+    # choice where tutti cannot follow it — and the form says so.
     "condition": FieldHint(
-        help="Zustand. Facebook kennt feste Werte, tutti schreibt sie aus.",
+        help="Welcher Zustand zählt.",
         default_note="Leer: jeder Zustand.",
         choices=[c.value for c in Condition],
-        open_choices=True,
+        labels={
+            "new": "Neu",
+            "used_like_new": "Gebraucht, wie neu",
+            "used_good": "Gebraucht, gut",
+            "used_fair": "Gebraucht, brauchbar",
+        },
+        note="tutti unterscheidet nur neu und gebraucht — jede gebrauchte Stufe "
+        "wählt dort alles Gebrauchte aus.",
     ),
     "category": FieldHint(
         help="Auf eine Kategorie einschränken.",
@@ -643,6 +661,35 @@ FIELD_HINTS: Dict[str, FieldHint] = {
 }
 
 
+# Where one variant needs a field described differently from every other. A
+# local Ollama has no key to enter, its address is mandatory, and the server
+# can be asked which models it holds — none of which is true of a hosted
+# provider using the same config class.
+VARIANT_HINTS: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {
+    ("ai", "ollama"): {
+        "base_url": {
+            "help": "Adresse des Ollama-Servers. Der Port ist üblicherweise 11434.",
+            "default_note": "",
+            "placeholder": "192.168.1.169:11434",
+            "required": True,
+            "control": "endpoint",
+        },
+        "model": {
+            "help": "Wird vom Server geholt, sobald die Verbindung steht.",
+            "default_note": "",
+            "required": True,
+            "control": "model-list",
+        },
+    },
+}
+
+# Fields a variant does not need at all. Ollama's api_key exists only because
+# the OpenAI client insists on one; it is never checked.
+HIDDEN_BY_VARIANT: Dict[Tuple[str, str], FrozenSet[str]] = {
+    ("ai", "ollama"): frozenset({"api_key"}),
+}
+
+
 @dataclass
 class FieldSchema:
     """One editable option, as the form needs to know it."""
@@ -655,6 +702,8 @@ class FieldSchema:
     help: str
     default_note: str
     choices: List[str]
+    labels: Dict[str, str]
+    note: str
     open_choices: bool
     secret: bool
     multiline: bool
@@ -736,9 +785,14 @@ def _is_required(f: "dataclasses.Field[Any]") -> bool:
     )
 
 
-def describe_field(f: "dataclasses.Field[Any]") -> FieldSchema:
+def describe_field(
+    f: "dataclasses.Field[Any]", overrides: Dict[str, Dict[str, Any]] | None = None
+) -> FieldSchema:
     """Turn one dataclass field into the description a form needs."""
     hint = FIELD_HINTS.get(f.name, FieldHint())
+    override = (overrides or {}).get(f.name)
+    if override:
+        hint = dataclasses.replace(hint, **override)
     value_type = _field_type(f.type)
     return FieldSchema(
         name=f.name,
@@ -749,6 +803,8 @@ def describe_field(f: "dataclasses.Field[Any]") -> FieldSchema:
         help=hint.help,
         default_note=hint.default_note,
         choices=list(hint.choices),
+        labels=dict(hint.labels),
+        note=hint.note,
         open_choices=hint.open_choices,
         secret=hint.secret,
         multiline=hint.multiline,
@@ -770,8 +826,10 @@ def describe_dataclass(
     rather than silently absent until someone remembers this file.
     """
     hidden = HIDDEN_BY_KIND.get(kind, frozenset()) | hide
+    hidden = hidden | HIDDEN_BY_VARIANT.get((kind, variant), frozenset())
+    overrides = VARIANT_HINTS.get((kind, variant))
     described = {
-        f.name: describe_field(f)
+        f.name: describe_field(f, overrides)
         for f in dataclasses.fields(cls)
         if f.name not in INTERNAL_FIELDS and f.name not in hidden and not f.name.startswith("_")
     }

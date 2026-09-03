@@ -9,12 +9,7 @@ from fastapi.testclient import TestClient
 from ai_marketplace_monitor.webui.auth import verify_password
 from ai_marketplace_monitor.webui.config_api import ConfigFileService
 from ai_marketplace_monitor.webui.log_handler import LogBroadcastHandler
-from ai_marketplace_monitor.webui.server import (
-    AuthState,
-    WebUIConfig,
-    _resolve_auth,
-    create_app,
-)
+from ai_marketplace_monitor.webui.server import AuthState, WebUIConfig, _resolve_auth, create_app
 from ai_marketplace_monitor.webui.setup import (
     ENV_PASSWORD,
     ENV_USERNAME,

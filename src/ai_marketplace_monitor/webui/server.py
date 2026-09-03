@@ -49,7 +49,7 @@ from .auth import (
 )
 from .config_api import ConfigFileService
 from .config_auth import extract_credentials
-from .diagnostics import check_ai, check_notification, clear_cache, health
+from .diagnostics import check_ai, check_notification, clear_cache, health, probe_ollama
 from .found_export import iter_found_csv, iter_found_records, iter_found_rows
 from .log_handler import LogBroadcastHandler
 from .schema import config_schema
@@ -622,6 +622,20 @@ def create_app(
         __: None = Depends(require_csrf),
     ) -> Dict[str, Any]:
         result = check_ai(config.config_files, str(payload.get("ai") or ""))
+        return dataclasses.asdict(result)
+
+    @app.post("/api/test/ollama")
+    async def ollama_probe(
+        payload: Dict[str, Any],
+        _: str = Depends(require_session),
+        __: None = Depends(require_csrf),
+    ) -> Dict[str, Any]:
+        """Ask an Ollama server what it has, from the address in the form.
+
+        Unlike the other checks this one runs against unsaved input: it is what
+        turns "type the model name exactly right" into picking from a list.
+        """
+        result = probe_ollama(str(payload.get("base_url") or ""))
         return dataclasses.asdict(result)
 
     @app.post("/api/cache/clear")

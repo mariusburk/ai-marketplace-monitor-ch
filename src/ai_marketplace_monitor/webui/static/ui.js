@@ -306,7 +306,13 @@
     try {
       const query = state.hunt ? `?item=${encodeURIComponent(state.hunt)}` : "";
       const body = await api(`/api/found${query}`);
-      renderRail(body.items || []);
+      // From the config, not from the response: a hunt that has not found
+      // anything yet is still a hunt, and filtering to one hunt used to leave
+      // the rail with no way back to the others.
+      renderRail(
+        of("item").map((s) => s.name),
+        new Set(body.items || [])
+      );
       if (!body.finds.length) {
         feed.replaceChildren(
           Object.assign(el("div", "state"), {
@@ -325,14 +331,15 @@
     }
   }
 
-  function renderRail(items) {
+  function renderRail(hunts, withFinds) {
     const rail = $("#hunt-rail");
     rail.replaceChildren();
-    const entry = (name, label) => {
-      const btn = el("button", "hunt");
+    const entry = (name, label, quiet) => {
+      const btn = el("button", `hunt${quiet ? " quiet" : ""}`);
       btn.type = "button";
       btn.setAttribute("aria-current", String(state.hunt === name));
       btn.appendChild(el("span", "name", label));
+      if (quiet) btn.appendChild(el("span", "note", "noch keine Funde"));
       btn.addEventListener("click", () => {
         state.hunt = name;
         loadFeed();
@@ -340,7 +347,7 @@
       return btn;
     };
     rail.appendChild(entry("", "Alle Funde"));
-    items.forEach((name) => rail.appendChild(entry(name, name)));
+    hunts.forEach((name) => rail.appendChild(entry(name, name, !withFinds.has(name))));
   }
 
   /* ---------- Sections and forms ----------------------------------------- */
@@ -359,18 +366,43 @@
     const lists = names.map((v) => byKind[v]).filter(Boolean);
     if (!lists.length) return Object.values(byKind)[0] || [];
     if (lists.length === 1) return lists[0];
-    // A hunt on several marketplaces may only use options all of them accept.
-    // Offering the intersection turns "tutti has no category" into a field that
-    // is simply absent, rather than a save that fails after five steps.
-    const shared = (group, list) =>
-      list.filter((f) => lists.every((other) => other.some((s) => s[group].some((g) => g.name === f.name))));
-    return lists[0]
-      .map((step) => ({
-        ...step,
-        fields: shared("fields", step.fields),
-        advanced: shared("advanced", step.advanced),
-      }))
-      .filter((step) => step.fields.length || step.advanced.length || UI_STEPS.has(step.id));
+    // The union, not the intersection. Each marketplace narrows differently —
+    // facebook by city, tutti by canton — and picking both used to make every
+    // one of those fields vanish, because none was common to all. The loader
+    // hands each marketplace only the options it knows (`Config._options_for`),
+    // so both can stand here; a field only some accept says which.
+    const merged = [];
+    lists.forEach((steps, index) => {
+      const market = names[index];
+      steps.forEach((step) => {
+        let target = merged.find((s) => s.id === step.id);
+        if (!target) {
+          target = { ...step, fields: [], advanced: [] };
+          merged.push(target);
+        }
+        ["fields", "advanced"].forEach((group) => {
+          step[group].forEach((f) => {
+            const seen = target[group].find((g) => g.name === f.name);
+            if (seen) {
+              seen.markets.push(market);
+              return;
+            }
+            target[group].push({ ...f, markets: [market] });
+          });
+        });
+      });
+    });
+    // Say which marketplace an option belongs to, but only where it matters.
+    merged.forEach((step) => {
+      ["fields", "advanced"].forEach((group) => {
+        step[group].forEach((f) => {
+          if (f.markets.length < names.length) f.only = f.markets.join(", ");
+        });
+      });
+    });
+    return merged.filter(
+      (step) => step.fields.length || step.advanced.length || UI_STEPS.has(step.id)
+    );
   }
 
   // Steps the UI fills itself: the marketplace picker and the channel picker
@@ -384,12 +416,90 @@
   // places editor writes four at once, because Facebook zips them positionally
   // and a shorter list silently truncates the search.
 
+  // "(a OR b) AND c"  <->  [["a","b"],["c"]]
+  //
+  // Returns null when the expression is not that shape — a NOT, a nested
+  // parenthesis, an OR of ANDs. Those keep their text box rather than being
+  // silently rewritten into something that means something else.
+  function parseTerms(text) {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return [];
+    if (/\bNOT\b/.test(trimmed)) return null;
+    const groups = [];
+    for (const part of splitTop(trimmed, "AND")) {
+      let chunk = part.trim();
+      const wrapped = /^\((.*)\)$/s.exec(chunk);
+      if (wrapped && splitTop(wrapped[1], "AND").length === 1) chunk = wrapped[1].trim();
+      if (chunk.includes("(") || chunk.includes(")")) return null;
+      const words = splitTop(chunk, "OR").map(unquote);
+      if (words.some((w) => !w || /\b(AND|OR|NOT)\b/.test(w))) return null;
+      groups.push(words);
+    }
+    return groups;
+  }
+
+  // Split on an operator only where the parentheses are balanced.
+  function splitTop(text, op) {
+    const out = [];
+    let depth = 0;
+    let at = 0;
+    const pattern = new RegExp(`\\b${op}\\b`, "g");
+    let match;
+    for (let i = 0; i < text.length; i += 1) {
+      if (text[i] === "(") depth += 1;
+      else if (text[i] === ")") depth -= 1;
+    }
+    if (depth !== 0) return [text];
+    depth = 0;
+    let quote = null;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (quote) {
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"') quote = ch;
+      else if (ch === "(") depth += 1;
+      else if (ch === ")") depth -= 1;
+      else if (depth === 0) {
+        pattern.lastIndex = i;
+        match = pattern.exec(text);
+        if (match && match.index === i) {
+          out.push(text.slice(at, i));
+          i = pattern.lastIndex - 1;
+          at = pattern.lastIndex;
+        }
+      }
+    }
+    out.push(text.slice(at));
+    return out.map((part) => part.trim()).filter((part) => part.length);
+  }
+
+  const unquote = (word) => word.trim().replace(/^['"](.*)['"]$/s, "$1").trim();
+
+  // A word with a space has to be quoted or the parser reads it as two.
+  const quoteWord = (word) => (/\s/.test(word) ? `'${word.replace(/'/g, "")}'` : word);
+
+  function buildTerms(groups) {
+    const filled = groups.map((group) => group.filter(Boolean)).filter((group) => group.length);
+    if (!filled.length) return undefined;
+    const parts = filled.map((group) =>
+      group.length === 1
+        ? quoteWord(group[0])
+        : `(${group.map(quoteWord).join(" OR ")})`
+    );
+    return parts.length === 1 ? parts[0] : parts.join(" AND ");
+  }
+
   const asList = (value) =>
     value == null ? [] : Array.isArray(value) ? value.slice() : [value];
 
   function labelFor(field) {
     const label = el("label", null, field.label || field.name.replace(/_/g, " "));
     if (field.required) label.appendChild(el("span", "req", " *"));
+    // On a hunt spanning several marketplaces, an option only one of them
+    // understands would otherwise look like it applied to all.
+    if (field.only) label.appendChild(el("span", "only", ` nur ${field.only}`));
     return label;
   }
 
@@ -483,7 +593,7 @@
         field.choices.forEach((choice) => {
           const chip = el("button", "chip-pick");
           chip.type = "button";
-          chip.textContent = choice;
+          chip.textContent = (field.labels && field.labels[choice]) || choice;
           chip.setAttribute("aria-pressed", String(picked.includes(choice)));
           chip.addEventListener("click", () => {
             picked = picked.includes(choice)
@@ -751,6 +861,249 @@
       };
     },
 
+    // A tag box: words in, words out, no syntax to learn.
+    words(field, value) {
+      let words = asList(value)
+        .join(", ")
+        .split(",")
+        .map((w) => w.trim())
+        .filter(Boolean);
+      const box = el("div", "tagbox");
+      const paint = () => {
+        box.replaceChildren();
+        words.forEach((word, index) => {
+          const tag = el("span", "tag", word);
+          const drop = el("button", "tag-x", "×");
+          drop.type = "button";
+          drop.title = `${word} entfernen`;
+          drop.addEventListener("click", () => {
+            words.splice(index, 1);
+            paint();
+          });
+          tag.appendChild(drop);
+          box.appendChild(tag);
+        });
+        const input = el("input", "tag-input");
+        input.placeholder = words.length ? "" : field.placeholder || "Wort eingeben";
+        const commit = (refocus) => {
+          // A repaint moves the input out of the DOM, which fires blur — and a
+          // blur that repaints again lands on a node that is already gone.
+          if (!input.isConnected) return;
+          const raw = input.value.trim().replace(/,$/, "");
+          if (!raw) return;
+          if (!words.includes(raw)) words.push(raw);
+          paint();
+          if (refocus) box.querySelector(".tag-input").focus();
+        };
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === ",") {
+            event.preventDefault();
+            commit(true);
+          } else if (event.key === "Backspace" && !input.value && words.length) {
+            words.pop();
+            paint();
+            box.querySelector(".tag-input").focus();
+          }
+        });
+        input.addEventListener("blur", () => commit(false));
+        box.appendChild(input);
+      };
+      paint();
+      return {
+        node: box,
+        read: () => ({ [field.name]: words.length ? words.slice() : undefined }),
+      };
+    },
+
+    // Keywords, without asking anyone to write a boolean expression.
+    //
+    // The stored value is one: `is_substring` parses AND / OR / NOT with
+    // pyparsing. Nearly every real filter has the same shape — a few groups
+    // that must all match, each satisfied by any one of its words — so that is
+    // what this edits. Anything more intricate keeps its text box, because
+    // rewriting an expression nobody can see would be worse than not offering
+    // the builder at all.
+    terms(field, value) {
+      const text = Array.isArray(value) ? value.join(" AND ") : value == null ? "" : String(value);
+      const parsed = parseTerms(text);
+      if (parsed === null) {
+        const raw = el("input");
+        raw.value = text;
+        const wrap = el("div");
+        wrap.append(
+          raw,
+          el(
+            "p",
+            "default-note",
+            "Dieser Ausdruck ist für den Baukasten zu verschachtelt und bleibt, wie er ist."
+          )
+        );
+        return {
+          node: wrap,
+          read: () => ({ [field.name]: raw.value.trim() || undefined }),
+        };
+      }
+
+      let groups = parsed.length ? parsed : [[]];
+      const box = el("div", "groups");
+      const paint = () => {
+        box.replaceChildren();
+        groups.forEach((group, index) => {
+          const row = el("div", "group");
+          if (index > 0) row.appendChild(el("span", "joiner", "und"));
+          const inner = el("div", "group-body");
+          const tags = el("div", "tagbox");
+          const drawTags = () => {
+            tags.replaceChildren();
+            group.forEach((word, at) => {
+              const tag = el("span", "tag", word);
+              const drop = el("button", "tag-x", "×");
+              drop.type = "button";
+              drop.addEventListener("click", () => {
+                group.splice(at, 1);
+                drawTags();
+              });
+              tag.appendChild(drop);
+              tags.appendChild(tag);
+              if (at < group.length - 1) tags.appendChild(el("span", "or", "oder"));
+            });
+            const input = el("input", "tag-input");
+            input.placeholder = group.length ? "oder …" : field.placeholder || "gopro";
+            const commit = (refocus) => {
+              if (!input.isConnected) return;
+              const raw = input.value.trim().replace(/,$/, "");
+              if (!raw || group.includes(raw)) return;
+              group.push(raw);
+              drawTags();
+              if (refocus) tags.querySelector(".tag-input").focus();
+            };
+            input.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === ",") {
+                event.preventDefault();
+                commit(true);
+              } else if (event.key === "Backspace" && !input.value && group.length) {
+                group.pop();
+                drawTags();
+                tags.querySelector(".tag-input").focus();
+              }
+            });
+            input.addEventListener("blur", () => commit(false));
+            tags.appendChild(input);
+          };
+          drawTags();
+          inner.appendChild(tags);
+          row.appendChild(inner);
+          if (groups.length > 1) {
+            const drop = el("button", "ghost small danger", "×");
+            drop.type = "button";
+            drop.title = "Zeile entfernen";
+            drop.addEventListener("click", () => {
+              groups.splice(index, 1);
+              if (!groups.length) groups = [[]];
+              paint();
+            });
+            row.appendChild(drop);
+          }
+          box.appendChild(row);
+        });
+        const add = el("button", "ghost small", "+ und …");
+        add.type = "button";
+        add.title = "Eine weitere Bedingung, die zusätzlich zutreffen muss";
+        add.addEventListener("click", () => {
+          groups.push([]);
+          paint();
+        });
+        box.appendChild(add);
+      };
+      paint();
+      return {
+        node: box,
+        read: () => ({ [field.name]: buildTerms(groups) }),
+      };
+    },
+
+    // An address with a "does it answer?" button. Its answer feeds the model
+    // list next to it, which is the whole point: no typing a model name from
+    // memory and finding out an hour later that it was a typo.
+    endpoint(field, value) {
+      const input = el("input");
+      input.value = value == null ? "" : String(value);
+      if (field.placeholder) input.placeholder = field.placeholder;
+      const probe = el("button", "ghost small", "Verbindung prüfen");
+      probe.type = "button";
+      const result = el("p", "result");
+      result.hidden = true;
+      probe.addEventListener("click", async () => {
+        result.hidden = false;
+        result.className = "result";
+        result.textContent = "prüfe…";
+        probe.disabled = true;
+        try {
+          const res = await api("/api/test/ollama", {
+            method: "POST",
+            body: { base_url: input.value.trim() },
+          });
+          result.className = `result ${res.ok ? "ok" : "bad"}`;
+          result.textContent = res.message;
+          const models = (res.detail && res.detail.models) || [];
+          if (res.ok && res.detail && res.detail.base_url) input.value = res.detail.base_url;
+          state.models = models;
+          document.dispatchEvent(new CustomEvent("aimm:models", { detail: models }));
+        } catch (err) {
+          result.className = "result bad";
+          result.textContent = err.message;
+        } finally {
+          probe.disabled = false;
+        }
+      });
+      const row = el("div", "pair");
+      row.append(input, probe);
+      const wrap = el("div");
+      wrap.append(row, result);
+      return {
+        node: wrap,
+        read: () => ({ [field.name]: input.value.trim() || undefined }),
+      };
+    },
+
+    "model-list"(field, value) {
+      const current = value == null ? "" : String(value);
+      const host = el("div");
+      const draw = (models) => {
+        host.replaceChildren();
+        if (!models.length) {
+          const input = el("input");
+          input.value = current;
+          input.placeholder = "qwen2.5:7b";
+          host.appendChild(input);
+          host._value = () => input.value.trim();
+          return;
+        }
+        const select = el("select");
+        if (!models.includes(current)) {
+          const blank = el("option", null, "— Modell wählen —");
+          blank.value = "";
+          select.appendChild(blank);
+        }
+        models.forEach((model) => {
+          const option = el("option", null, model);
+          option.value = model;
+          select.appendChild(option);
+        });
+        select.value = models.includes(current) ? current : "";
+        host.appendChild(select);
+        host.appendChild(el("p", "default-note", `${models.length} auf dem Server gefunden.`));
+        host._value = () => select.value;
+      };
+      draw(state.models || []);
+      const listen = (event) => draw(event.detail || []);
+      document.addEventListener("aimm:models", listen);
+      return {
+        node: host,
+        read: () => ({ [field.name]: (host._value && host._value()) || undefined }),
+      };
+    },
+
     number(field, value) {
       const input = el("input");
       input.type = "number";
@@ -798,6 +1151,7 @@
     if (!made.skipLabel) wrap.appendChild(labelFor(field));
     wrap.appendChild(made.node);
     notesFor(field, made.quiet).forEach((note) => wrap.appendChild(note));
+    if (field.note) wrap.appendChild(el("p", "caveat", field.note));
     wrap.dataset.control = field.control;
     wrap._read = made.read;
     return wrap;
@@ -1163,10 +1517,19 @@
 
   /* ---------- Verbindungen ------------------------------------------------ */
 
+  // Sections that exist once and carry no name of their own, as [monitor] does.
+  const SINGLETON_KINDS = new Set(["monitor"]);
+
   function sectionEditor(kind, existing, title, hint, preset) {
     const variants = Object.keys((state.schema.kinds && state.schema.kinds[kind]) || {});
     let variant = existing ? existing.variant || variants[0] : preset || variants[0];
-    let name = existing ? existing.name : variants.length > 1 ? variant : "";
+    let name = existing
+      ? existing.name
+      : SINGLETON_KINDS.has(kind)
+      ? kind
+      : variants.length > 1
+      ? variant
+      : "";
     let touched = false;
     // Which channels a recipient uses. Derived on open from what is filled in,
     // so an existing recipient shows the ways it already has.
@@ -1222,7 +1585,8 @@
             repaint();
           });
         }
-        if (existing) return;
+        // A singleton section is called after its kind; there is nothing to name.
+        if (existing || SINGLETON_KINDS.has(kind)) return;
         const input = nameField(
           host,
           "section-name-new",
@@ -1470,9 +1834,11 @@
     row.style.borderTop = "0";
     row.appendChild(who);
     button.addEventListener("click", () =>
+      // Passing a made-up section when none exists made the form send a PUT,
+      // which failed with "Abschnitt monitor.monitor existiert nicht".
       sectionEditor(
         "monitor",
-        state.sections.find((s) => s.kind === "monitor") || { name: "monitor", values: {}, variant: null },
+        state.sections.find((s) => s.kind === "monitor") || null,
         "Anzeige und Wechselkurse",
         ""
       )

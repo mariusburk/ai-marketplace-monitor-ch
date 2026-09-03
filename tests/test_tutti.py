@@ -529,3 +529,61 @@ def test_observations_skip_listings_without_a_usable_price() -> None:
     )
 
     assert [o.amount for o in found] == [250]
+
+
+#
+# One condition vocabulary for two marketplaces
+#
+
+
+def test_a_facebook_condition_becomes_the_word_tutti_prints() -> None:
+    """A hunt names one condition; each marketplace takes it as far as it goes.
+
+    Facebook grades used goods three ways and tutti only says new or used, so
+    picking any used grade has to select everything used on tutti.
+    """
+    from ai_marketplace_monitor.tutti import tutti_conditions
+
+    assert tutti_conditions(["new"], "de") == ["Neu"]
+    assert tutti_conditions(["used_good"], "de") == ["Gebraucht"]
+    assert tutti_conditions(["used_like_new", "used_fair"], "de") == ["Gebraucht"]
+    assert tutti_conditions(["new", "used_good"], "de") == ["Neu", "Gebraucht"]
+
+
+def test_a_hand_written_condition_is_left_alone() -> None:
+    """Configs written before the shared vocabulary keep working."""
+    from ai_marketplace_monitor.tutti import tutti_conditions
+
+    assert tutti_conditions(["Gebraucht"], "de") == ["Gebraucht"]
+    assert tutti_conditions(["new", "Gebraucht"], "de") == ["Neu", "Gebraucht"]
+
+
+def test_the_words_follow_the_site_language() -> None:
+    from ai_marketplace_monitor.tutti import tutti_conditions
+
+    assert tutti_conditions(["new"], "fr") == ["Neuf"]
+    assert tutti_conditions(["new"], "it") == ["Nuovo"]
+
+
+def test_a_canonical_condition_filters_a_real_listing() -> None:
+    """End to end through the filter the search actually uses."""
+    marketplace = _marketplace_with(TuttiMarketplaceConfig(name="tutti"))
+    used = Listing(
+        marketplace="tutti",
+        name="velo",
+        id="1",
+        title="Velo",
+        image="",
+        price="CHF 100",
+        post_url="https://www.tutti.ch/de/vi/x/1",
+        location="Zürich",
+        seller="s",
+        condition="Gebraucht",
+        description="d",
+    )
+
+    wants_new = TuttiItemConfig(name="velo", search_phrases=["velo"], condition=["new"])
+    wants_used = TuttiItemConfig(name="velo", search_phrases=["velo"], condition=["used_good"])
+
+    assert not marketplace.check_listing(used, wants_new)
+    assert marketplace.check_listing(used, wants_used)
