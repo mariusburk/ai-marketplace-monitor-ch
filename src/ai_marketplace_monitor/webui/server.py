@@ -229,6 +229,20 @@ def _enumerate_urls(host: str, port: int) -> List[str]:
     return [f"http://{host}:{port}"]
 
 
+def negotiated_subprotocol(offered: str | None) -> str | None:
+    """Which websocket subprotocol to answer with, given what was offered.
+
+    Only ever one the client named. noVNC has not asked for "binary" since 1.3
+    — it sets `binaryType` on the socket instead — and RFC 6455 forbids a
+    server naming a subprotocol that was not in the request. Answering
+    "binary" regardless made Chrome refuse the upgrade outright ("Response
+    must not include Sec-WebSocket-Protocol header if not present in
+    request"), which surfaced as noVNC's "Failed to connect to server".
+    """
+    wanted = [part.strip() for part in (offered or "").split(",") if part.strip()]
+    return "binary" if "binary" in wanted else None
+
+
 def create_app(
     config: WebUIConfig,
     state: AuthState,
@@ -735,7 +749,9 @@ def create_app(
                 if not session or sessions.validate(session) is None:
                     await websocket.close(code=4401)
                     return
-            await websocket.accept(subprotocol="binary")
+            await websocket.accept(
+                subprotocol=negotiated_subprotocol(websocket.headers.get("sec-websocket-protocol"))
+            )
             try:
                 reader, writer = await asyncio.open_connection(vnc_host, vnc_port)
             except OSError:

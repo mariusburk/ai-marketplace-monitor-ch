@@ -74,6 +74,7 @@
           const data = await res.json();
           state.csrf = data.csrf || getCookie("aimm_csrf");
           hideLogin();
+          await revealBrowserButton();
           await bootstrap();
           return;
         }
@@ -113,6 +114,7 @@
       state.csrf = data.csrf || getCookie("aimm_csrf");
       $("#login-error").hidden = true;
       hideLogin();
+      await revealBrowserButton();
       await bootstrap();
     } catch (err) {
       $("#login-error").textContent = String(err);
@@ -1717,17 +1719,28 @@
     }
   };
 
+  // Reveal the live-browser link if this deployment has one. Asked for on
+  // every way into the app, not only when a cookie was already there: after a
+  // fresh sign-in the button used to stay hidden until the page was reloaded.
+  async function revealBrowserButton(known) {
+    const button = document.getElementById("browser-btn");
+    if (!button) return;
+    try {
+      const status =
+        known || (await (await fetch("/api/status", { credentials: "same-origin" })).json());
+      if (status && status.vnc_enabled) button.hidden = false;
+    } catch (_) {
+      /* the link is a convenience; its absence is not worth reporting */
+    }
+  }
+
   // If we already have a session cookie from a prior visit, try bootstrapping.
   (async () => {
     try {
       const res = await fetch("/api/status", { credentials: "same-origin" });
       if (res.ok) {
         state.csrf = getCookie("aimm_csrf");
-        try {
-          const status = await res.clone().json();
-          const browserBtn = document.getElementById("browser-btn");
-          if (browserBtn && status && status.vnc_enabled) browserBtn.hidden = false;
-        } catch (_) {}
+        await revealBrowserButton(await res.clone().json().catch(() => null));
         hideLogin();
         await bootstrap();
       } else {
