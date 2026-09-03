@@ -142,3 +142,87 @@ def test_the_same_listing_seen_twice_counts_once() -> None:
 
     _, composition = reference("gopro_dedupe", "$")
     assert composition == {"facebook": 1}
+
+
+#
+# A price the seller cut
+#
+
+
+def test_a_reduced_price_keeps_only_what_is_being_asked() -> None:
+    """Facebook renders the old price struck through next to the new one.
+
+    Joined into "CHF280 | CHF380" it reads as a range or a typo. The second
+    number is not on offer — it is what the thing used to cost.
+    """
+    from ai_marketplace_monitor.utils import split_price
+
+    assert split_price("$280 | $350") == ("$280", "$350")
+    assert split_price("CHF 280") == ("CHF 280", "")
+    # a listing that was never reduced must not claim it was
+    assert split_price("$280 | $280") == ("$280", "")
+
+
+def test_the_price_filter_reads_the_asked_price_not_the_old_one() -> None:
+    """It always did, via the pipe; keep it that way now the split is explicit."""
+    from ai_marketplace_monitor.facebook import parse_price
+
+    assert parse_price("$280 | $350") == 280
+    assert parse_price("$280") == 280
+
+
+#
+# What counts towards the going rate
+#
+
+
+def test_an_accessory_does_not_set_the_price_of_the_machine() -> None:
+    """Keywords cannot tell a motorcycle from a spare part for one.
+
+    On a real hunt for a CHF 5000-15000 bike, 64 of 104 observations were under
+    CHF 500 — exhausts, decals, phone mounts, all matching "(BMW) AND (1000)" —
+    and dragged the median to 194. Every actual bike then read as wildly
+    overpriced, and that figure went to the AI as "the going rate".
+    """
+    from ai_marketplace_monitor.price_stats import category_window
+
+    low, high = category_window(5000, 15000)
+
+    assert not low <= 29 <= high  # an exhaust
+    assert low <= 12000 <= high  # the bike
+    assert low <= 21000 <= high  # a dealer's, still the same kind of object
+
+
+def test_the_window_stays_open_where_nothing_was_said() -> None:
+    """A hunt that named no price range has told us nothing to filter on."""
+    from ai_marketplace_monitor.price_stats import category_window
+
+    assert category_window(None, None) == (0.0, float("inf"))
+    assert category_window(None, 300)[1] == 1200.0
+    assert category_window(100, None) == (25.0, float("inf"))
+
+
+def test_observations_drop_a_price_from_a_different_league() -> None:
+    """The window follows the hunt's own range, end to end."""
+    item_config = FacebookItemConfig(
+        name="s1k", search_phrases=["BMW S1000RR"], min_price="5000", max_price="15000"
+    )
+    listings: List[Listing] = [
+        _listing("$29", title="BMW S1000RR Auspuff-Aufkleber"),
+        _listing("$450", title="BMW S1000RR Helm 1000"),
+        _listing("$12000", title="BMW S1000RR 2019"),
+        _listing("$21000", title="BMW S1000RR 2024"),
+    ]
+
+    found = _marketplace().observations(listings, item_config, "$")
+
+    assert sorted(o.amount for o in found) == [12000, 21000]
+
+
+def test_observations_keep_everything_when_no_range_was_given() -> None:
+    item_config = FacebookItemConfig(name="offen", search_phrases=["gopro"])
+    listings = [_listing(f"${p}", listing_id=str(p)) for p in (5, 300, 20000)]
+
+    found = _marketplace().observations(listings, item_config, "$")
+
+    assert sorted(o.amount for o in found) == [5, 300, 20000]

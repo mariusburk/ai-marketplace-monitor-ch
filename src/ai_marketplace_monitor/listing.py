@@ -32,6 +32,9 @@ class Listing:
     # count. Kept structured so the web UI can draw the price ruler instead of
     # parsing the sentence back apart.
     price_basis: Dict[str, int] = field(default_factory=dict)
+    # What the listing cost before the seller reduced it, when the marketplace
+    # shows that. `price` is always what is being asked now.
+    original_price: str = ""
 
     @property
     def content(self: "Listing") -> Tuple[str, str, str]:
@@ -48,7 +51,14 @@ class Listing:
             {
                 x: (y.split("?")[0] if x == "post_url" else y)
                 for x, y in asdict(self).items()
-                if x not in ("image", "price_comparison", "converted_price", "price_basis")
+                if x
+                not in (
+                    "image",
+                    "price_comparison",
+                    "converted_price",
+                    "price_basis",
+                    "original_price",
+                )
             }
         )
 

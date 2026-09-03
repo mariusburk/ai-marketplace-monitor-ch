@@ -620,6 +620,20 @@ def extract_price(price: str) -> str:
     return price
 
 
+def split_price(price: str) -> Tuple[str, str]:
+    """A rendered price, and what it was before the seller cut it.
+
+    Facebook renders a reduced listing as the current price next to the old one
+    struck through, and `extract_price` keeps both, joined by a pipe. Shown as
+    "CHF280 | CHF380" that reads like a range or a typo; the second number is
+    not on offer, it is what the thing used to cost.
+    """
+    parts = [part.strip() for part in (price or "").split("|")]
+    current = parts[0] if parts else ""
+    previous = parts[1] if len(parts) > 1 else ""
+    return current, ("" if previous == current else previous)
+
+
 def convert_to_seconds(time_str: str) -> int:
     cal = parsedatetime.Calendar(version=parsedatetime.VERSION_CONTEXT_STYLE)
     time_struct, _ = cal.parse(time_str)

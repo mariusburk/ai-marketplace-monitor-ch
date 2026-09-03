@@ -14,7 +14,7 @@ from rich.pretty import pretty_repr
 from .listing import Listing
 from .marketplace import ItemConfig, Marketplace, MarketplaceConfig, WebPage
 from .price_index import PriceObservation, record, reference
-from .price_stats import convert_for_display, describe_price, price_basis
+from .price_stats import category_window, convert_for_display, describe_price, price_basis
 from .utils import (
     BaseConfig,
     CounterItem,
@@ -497,6 +497,11 @@ class TuttiMarketplace(Marketplace):
                     )
 
                 if self.check_listing(listing, item_config):
+                    # The cached detail is what the web UI reads back, and it
+                    # was written by `get_listing_details` before the price
+                    # comparison existed — so the finds feed had nothing to
+                    # draw its ruler from. Store the finished listing.
+                    listing.to_cache(listing.post_url)
                     yield listing
                 else:
                     counter.increment(CounterItem.EXCLUDED_LISTING, item_config.name)
@@ -506,14 +511,19 @@ class TuttiMarketplace(Marketplace):
     ) -> List[PriceObservation]:
         """The priced listings this search may contribute to the going rate.
 
-        Only the keyword filters are applied, so a Hero 13 is measured against
-        other Hero 13 offers. The price bounds are deliberately ignored — they
-        are the question being asked, and applying them would clip the very
-        distribution the comparison rests on. The canton filter is skipped too,
-        because what an item is worth does not stop at a cantonal border.
+        The keyword filters are applied, so a Hero 13 is measured against other
+        Hero 13 offers. The price bounds are not applied as bounds — they are
+        the question being asked, and clipping to them would leave every offer
+        sitting mid-pack — but a generous window around them is, because
+        keywords cannot tell a motorcycle from a spare part for one. See
+        `category_window`. The canton filter is skipped entirely: what an item
+        is worth does not stop at a cantonal border.
         """
         keywords = item_config.keywords
         antikeywords = item_config.antikeywords
+        low, high = category_window(
+            parse_price(item_config.min_price), parse_price(item_config.max_price)
+        )
         seen_at = time.time()
         found: List[PriceObservation] = []
         for listing in listings:
@@ -524,6 +534,8 @@ class TuttiMarketplace(Marketplace):
                 continue
             amount = parse_price(listing.price)
             if amount is None or amount <= 0:
+                continue
+            if not low <= amount <= high:
                 continue
             found.append(
                 PriceObservation(

@@ -111,8 +111,17 @@
       return wrap;
     }
 
-    const span = basis.maximum - basis.minimum;
-    const at = (value) => `${Math.min(100, Math.max(0, ((value - basis.minimum) / span) * 100))}%`;
+    // A log axis, because one CHF 7999 machine among CHF 200-1300 bikes flattened
+    // a linear one until the minimum, the median and the asking price all sat
+    // inside the first eight percent, printed on top of each other. What
+    // matters about a price is its ratio to the others, which is what a log
+    // scale spaces evenly.
+    const lo = Math.log(Math.max(1, basis.minimum));
+    const hi = Math.log(Math.max(2, basis.maximum));
+    const span = hi - lo || 1;
+    const pct = (value) =>
+      Math.min(100, Math.max(0, ((Math.log(Math.max(1, value)) - lo) / span) * 100));
+    const at = (value) => `${pct(value)}%`;
     const offset = Math.round(((basis.amount - basis.median) / basis.median) * 100);
     const verdict = offset <= -5 ? "under" : offset >= 5 ? "over" : "level";
     wrap.className = "ruler";
@@ -142,10 +151,23 @@
       if (shift) node.style.transform = shift;
       scale.appendChild(node);
     };
-    put(String(basis.minimum), "0", false, "none");
-    put(`Median ${basis.median}`, at(basis.median), false);
-    put(String(basis.maximum), "100%", false, "translateX(-100%)");
+    // Placed in order of what the reader needs: the asking price, then the
+    // median, then the ends of the range. A label too close to one already
+    // placed is dropped rather than printed over it — the readout underneath
+    // says the same thing in words.
+    const MIN_GAP = 14;
+    const placed = [pct(basis.amount)];
+    const room = (position) => placed.every((other) => Math.abs(other - position) >= MIN_GAP);
     put(String(basis.amount), at(basis.amount), true);
+    if (room(pct(basis.median))) {
+      placed.push(pct(basis.median));
+      put(`Median ${basis.median}`, at(basis.median), false);
+    }
+    if (room(0)) {
+      placed.push(0);
+      put(String(basis.minimum), "0", false, "none");
+    }
+    if (room(100)) put(String(basis.maximum), "100%", false, "translateX(-100%)");
     wrap.appendChild(scale);
 
     const readout = el("p", "readout");
@@ -223,6 +245,10 @@
       price.appendChild(el("span", "orig", find.price));
     } else {
       price.textContent = find.price || "—";
+    }
+    // A price the seller cut, struck through the way the marketplace shows it.
+    if (find.original_price) {
+      price.appendChild(el("span", "was", find.original_price));
     }
     top.appendChild(price);
 

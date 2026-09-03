@@ -179,6 +179,7 @@ def _to_record(
         # The notified price is what the user was told; details may have moved on.
         "price": (price if price is not None else details.get("price", "")) or "",
         "converted_price": details.get("converted_price", "") or "",
+        "original_price": details.get("original_price", "") or "",
         "price_comparison": details.get("price_comparison", "") or "",
         # Structured so the UI can draw the price ruler rather than parse prose.
         "price_basis": details.get("price_basis") or {},

@@ -343,6 +343,11 @@ class PushNotificationConfig(NotificationConfig):
             price_line = listing.price
             if listing.converted_price:
                 price_line = f"{listing.converted_price} ({listing.price})"
+            # A seller cutting their own price is worth saying out loud, and
+            # saying it in words beats the marketplace's own "280 | 380", which
+            # reads like a range rather than a reduction.
+            if listing.original_price:
+                price_line = f"{price_line}, reduziert von {listing.original_price}"
             if listing.price_comparison:
                 price_line = f"{price_line} ({listing.price_comparison})"
 

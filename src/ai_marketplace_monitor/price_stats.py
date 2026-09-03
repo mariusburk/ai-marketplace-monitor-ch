@@ -13,11 +13,43 @@ Hero 13 offers rather than against every camera on the site.
 
 from dataclasses import dataclass
 from statistics import median
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 # A handful of offers says very little about a market price, so no comparison
 # is reported below this many reference prices.
 MIN_REFERENCE_PRICES = 4
+
+# How far outside a hunt's own price range an offer may sit and still count
+# towards the going rate.
+#
+# Keyword filters cannot tell a motorcycle from an exhaust pipe for one: a
+# "BMW S1000RR Auspuff" at CHF 29 matches "(BMW) AND (1000)" exactly as well as
+# the bike does. On a real hunt for a CHF 5000-15000 machine, 64 of 104
+# observations were under CHF 500, dragging the median to 194 — a figure that
+# made every actual bike look wildly overpriced, and that went into the AI
+# prompt as "the going rate".
+#
+# The price range is the one thing a person has already told us about the size
+# of the thing they want. Using it *as* the comparison window would be circular
+# — everything would sit mid-pack — so it is widened generously and used only
+# to keep a different category of object out. A quarter of the floor and four
+# times the ceiling leaves the distribution wide enough to be worth comparing
+# against, while an accessory two orders of magnitude cheaper drops out.
+CATEGORY_FLOOR = 0.25
+CATEGORY_CEILING = 4.0
+
+
+def category_window(minimum: int | None, maximum: int | None) -> Tuple[float, float]:
+    """The range of prices that plausibly describe the same kind of object.
+
+    Open at whichever end the hunt left open; fully open when it named neither,
+    which is the honest answer — nothing has been said about the size of the
+    thing, so nothing can be ruled out.
+    """
+    low = minimum * CATEGORY_FLOOR if minimum else 0.0
+    high = maximum * CATEGORY_CEILING if maximum else float("inf")
+    return low, high
+
 
 # Differences this small are noise rather than a bargain.
 NOTEWORTHY_PERCENT = 5
